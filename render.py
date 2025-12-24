@@ -109,15 +109,24 @@ def main():
     lat = float(os.getenv("OPENWEATHER_LAT", "37.5665"))
     lon = float(os.getenv("OPENWEATHER_LON", "126.9780"))
 
+    debug = ""
     try:
         sym_today, sym_tomorrow = get_today_tomorrow_symbols(lat, lon)
-    except Exception:
+        if not sym_today and not sym_tomorrow:
+            debug = "NO_KEY_OR_NO_DATA"
+    except Exception as e:
         sym_today, sym_tomorrow = ("", "")
-
+        debug = f"ERR:{type(e).__name__}"
+    
     weather_text = f"{sym_today}  {sym_tomorrow}".strip()
+    
+    # 날씨 기호가 안 나오면 디버그 문구라도 표시
+    if not weather_text and debug:
+        weather_text = debug
+    
     if weather_text:
         ww = draw.textlength(weather_text, font=font_weather)
-        draw.text(((W - ww) / 2, top_margin + 220), weather_text, fill=FADE, font=font_weather)
+        draw.text(((W - ww) / 2, top_margin + 220), weather_text, fill=FADE, font=font_weather)    
 
     # ===== 요일 헤더 =====
     dow_y = grid_top - 55
