@@ -1,9 +1,9 @@
 name: Render Calendar
 
 on:
-  schedule:
-    - cron: "0 * * * *"   # 매 1시간(UTC)
   workflow_dispatch:
+  schedule:
+    - cron: "0 * * * *"   # 매시간 (원하면 수정)
 
 permissions:
   contents: write
@@ -19,7 +19,14 @@ jobs:
           python-version: "3.11"
 
       - run: pip install -r requirements.txt
-      - run: python render.py
+
+      # ✅ 여기서 단 한 번만 실행 + env 포함
+      - name: Render calendar image
+        run: python render.py
+        env:
+          OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
+          OPENWEATHER_LAT: "37.5665"
+          OPENWEATHER_LON: "126.9780"
 
       - name: Commit image
         run: |
@@ -28,9 +35,3 @@ jobs:
           git add docs/latest.png
           git commit -m "update calendar image" || echo "no change"
           git push
-
-      - run: python render.py
-        env:
-          OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
-          OPENWEATHER_LAT: "37.5665"
-          OPENWEATHER_LON: "126.9780"
