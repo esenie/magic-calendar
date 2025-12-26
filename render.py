@@ -6,19 +6,14 @@ import os
 import requests
 import subprocess
 
-# ===== Canvas =====
 W, H = 680, 960
 
-# ===== Colors (e-ink friendly) =====
 TEXT  = (30, 30, 30)
 FADE  = (180, 180, 180)
-LIGHT = (220, 220, 220)
 RED   = (200, 0, 0)
 
 DOW = ["S", "M", "T", "W", "T", "F", "S"]
 ICON_DIR = "assets/weather"
-
-# ---------- Weather helpers ----------
 
 def code_to_kind(wid: int) -> str:
     if 200 <= wid <= 232: return "thunder"
@@ -69,8 +64,6 @@ def load_icon(kind: str):
         return None
     return Image.open(p).convert("RGBA")
 
-# ---------- Main ----------
-
 def main():
     tz = pytz.timezone("Asia/Seoul")
     now = datetime.now(tz)
@@ -80,7 +73,6 @@ def main():
     img = Image.new("RGB", (W, H), "white")
     draw = ImageDraw.Draw(img)
 
-    # ===== Fonts =====
     BASE_FONT = "assets/Inter-Regular.ttf"
     if not os.path.exists(BASE_FONT):
         BASE_FONT = "assets/NanumGothic.ttf"
@@ -89,33 +81,32 @@ def main():
     font_dow    = ImageFont.truetype(BASE_FONT, 26)
     font_date   = ImageFont.truetype(BASE_FONT, 34)
     font_update = ImageFont.truetype(BASE_FONT, 16)
-    font_label  = ImageFont.truetype(BASE_FONT, 16)
+    font_label  = ImageFont.truetype(BASE_FONT, 14)
 
     # ===== Margins =====
-    top_margin  = 70
     side_margin = 60
+    top_margin  = 90  # ← 월 숫자를 살짝 아래로 내려서(겹침 방지)
 
     # ===== Update time (top-right) =====
     updated = now.strftime("%m-%d %H:%M")
     uw = draw.textlength(updated, font=font_update)
-    draw.text((W - side_margin - uw, top_margin - 10),
-              updated, fill=FADE, font=font_update)
+    draw.text((W - side_margin - uw, 26), updated, fill=FADE, font=font_update)
 
-    # ===== Weather widget (top-left, compact) =====
-    weather_left = side_margin
-    weather_top  = top_margin - 10
-    weather_w    = 220
-    gap          = 12
-    col_w        = (weather_w - gap) / 2
+    # ===== Weather widget (top-left, compact + safe) =====
+    # 좌상단: 겹침 방지 위해 월 숫자 영역과 분리(고정 y=22~90)
+    wx = side_margin
+    wy = 22
+    widget_w = 190
+    gap = 12
+    col_w = (widget_w - gap) / 2
 
-    draw.text((weather_left + (col_w - draw.textlength("TODAY", font=font_label))/2,
-               weather_top),
-              "TODAY", fill=FADE, font=font_label)
+    # Labels
+    def label(x_left, t):
+        tw = draw.textlength(t, font=font_label)
+        draw.text((x_left + (col_w - tw)/2, wy), t, fill=FADE, font=font_label)
 
-    draw.text((weather_left + col_w + gap +
-               (col_w - draw.textlength("TMRO", font=font_label))/2,
-               weather_top),
-              "TMRO", fill=FADE, font=font_label)
+    label(wx, "TODAY")
+    label(wx + col_w + gap, "TMRO")
 
     ensure_icons()
 
@@ -126,43 +117,42 @@ def main():
     except Exception:
         k_today, k_tmro = "", ""
 
+    icon_size = 52  # MUJI 스타일엔 52px가 깔끔
+    icon_y = wy + 18
+
     def paste_icon(kind, x_left):
         icon = load_icon(kind)
-        y = weather_top + 22
-        if icon:
-            icon = icon.resize((64, 64))
-            img.paste(icon,
-                      (int(x_left + (col_w - 64)/2), int(y)),
-                      icon)
+        if not icon:
+            return
+        icon = icon.resize((icon_size, icon_size))
+        x = int(x_left + (col_w - icon_size)/2)
+        img.paste(icon, (x, int(icon_y)), icon)
 
-    paste_icon(k_today, weather_left)
-    paste_icon(k_tmro, weather_left + col_w + gap)
+    paste_icon(k_today, wx)
+    paste_icon(k_tmro, wx + col_w + gap)
 
     # ===== Month (centered) =====
     mstr = str(month)
     mw = draw.textlength(mstr, font=font_month)
-    draw.text(((W - mw)/2, top_margin),
-              mstr, fill=TEXT, font=font_month)
+    draw.text(((W - mw)/2, top_margin), mstr, fill=TEXT, font=font_month)
 
-    # ===== Calendar grid =====
+    # ===== Grid layout =====
     grid_top = 380
     grid_bottom = 900
     grid_w = W - side_margin*2
     grid_h = grid_bottom - grid_top
-
     cols, rows = 7, 6
     cell_w = grid_w / cols
     cell_h = grid_h / rows
     grid_left = side_margin
 
-    # DOW
+    # DOW row
     dow_y = grid_top - 55
     for c, d in enumerate(DOW):
         x = grid_left + c*cell_w + cell_w/2
         color = RED if c in (0,6) else TEXT
         dw = draw.textlength(d, font=font_dow)
-        draw.text((x - dw/2, dow_y),
-                  d, fill=color, font=font_dow)
+        draw.text((x - dw/2, dow_y), d, fill=color, font=font_dow)
 
     # Dates
     cal = calendar.Calendar(firstweekday=6)
@@ -171,7 +161,7 @@ def main():
     for i, d in enumerate(days):
         r, c = divmod(i, cols)
         x0 = grid_left + c*cell_w
-        y0 = grid_top + r*cell_h
+        y0 = grid_top  + r*cell_h
 
         in_month = (d.month == month)
         color = TEXT if in_month else FADE
