@@ -137,24 +137,19 @@ def main():
     font_month  = ImageFont.truetype(BASE_FONT, 200)
     font_dow    = ImageFont.truetype(BASE_FONT, 26)
     font_date   = ImageFont.truetype(BASE_FONT, 34)
-    font_label  = ImageFont.truetype(BASE_FONT, 12)  # weather labels
+    font_label  = ImageFont.truetype(BASE_FONT, 12)  # TODAY/TMRO + update time + debug
     font_event  = ImageFont.truetype(BASE_FONT, 16)  # events under date
 
     # ===== Layout margins =====
     side_margin = 60
     top_margin  = 90  # month number slightly down to avoid overlaps
 
-    # ===== Update time (top-right, minute precision) =====
-    updated = now.strftime("%m-%d %H:%M")
-    uw = draw.textlength(updated, font=font_label)
-    draw.text((W - side_margin - uw, 26), updated, fill=FADE, font=font_label)
-    
     # ===== Weather widget (top-left, compact) =====
     wx = side_margin
     wy = 22
 
-    widget_w = 150   # compact width
-    gap = 6          # tighter gap between TODAY and TMRO
+    widget_w = 150
+    gap = 6
     col_w = (widget_w - gap) / 2
 
     def label(x_left, t):
@@ -194,10 +189,23 @@ def main():
 
     # ===== Load events from ICAL (max 2 per day) =====
     events_by_date = {}
+    ical_url = os.getenv("ICAL_URL", "").strip()
     try:
         events_by_date = fetch_events_by_date(max_per_day=2)
     except Exception:
         events_by_date = {}
+
+    # ===== Update time (top-right, same size as TODAY/TMRO) =====
+    updated = now.strftime("%m-%d %H:%M")
+    uw = draw.textlength(updated, font=font_label)
+    draw.text((W - side_margin - uw, 22), updated, fill=FADE, font=font_label)
+
+    # ===== Debug (ICS status + event count) =====
+    # 확인 끝나면 이 블록 통째로 삭제/주석 처리하면 됨.
+    ev_count = sum(len(v) for v in events_by_date.values())
+    dbg = f"ICS:{'OK' if ical_url else 'NO_URL'} EV:{ev_count}"
+    dw = draw.textlength(dbg, font=font_label)
+    draw.text((W - side_margin - dw, 40), dbg, fill=FADE, font=font_label)
 
     # ===== Calendar grid =====
     grid_top = 380
@@ -215,8 +223,8 @@ def main():
     for c, d in enumerate(DOW):
         x = grid_left + c*cell_w + cell_w/2
         color = RED if c in (0,6) else TEXT
-        dw = draw.textlength(d, font=font_dow)
-        draw.text((x - dw/2, dow_y), d, fill=color, font=font_dow)
+        dw2 = draw.textlength(d, font=font_dow)
+        draw.text((x - dw2/2, dow_y), d, fill=color, font=font_dow)
 
     # Dates
     cal = calendar.Calendar(firstweekday=6)
@@ -268,11 +276,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-ical_url = os.getenv("ICAL_URL", "").strip()
-debug_ical = f"ICS:{'OK' if ical_url else 'NO_URL'}"
-debug_cnt = f"EV:{sum(len(v) for v in events_by_date.values())}"
-
-dbg = f"{debug_ical} {debug_cnt}"
-dw = draw.textlength(dbg, font=font_label)
-draw.text((W - side_margin - dw, 44), dbg, fill=FADE, font=font_label)
