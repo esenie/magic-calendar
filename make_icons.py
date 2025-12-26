@@ -3,13 +3,13 @@ import os, math
 
 OUT_DIR = "assets/weather"
 SIZE = 128
-STROKE = 10
-PAD = 14
 
+# MUJI/Apple 느낌: 얇고 균일한 선
+STROKE = 6
 BLACK = (0, 0, 0, 255)
 TRANSPARENT = (0, 0, 0, 0)
 
-def new_canvas():
+def canvas():
     img = Image.new("RGBA", (SIZE, SIZE), TRANSPARENT)
     return img, ImageDraw.Draw(img)
 
@@ -17,83 +17,80 @@ def save(img, name):
     os.makedirs(OUT_DIR, exist_ok=True)
     img.save(os.path.join(OUT_DIR, f"{name}.png"))
 
-def draw_sun():
-    img, d = new_canvas()
+def sun():
+    img, d = canvas()
     cx, cy = SIZE//2, SIZE//2
-    r = 26
+    r = 24
     d.ellipse([cx-r, cy-r, cx+r, cy+r], outline=BLACK, width=STROKE)
-    for a in range(0, 360, 45):
+    for a in range(0, 360, 60):
         rad = math.radians(a)
-        x1 = cx + int((r+18)*math.cos(rad))
-        y1 = cy + int((r+18)*math.sin(rad))
-        x2 = cx + int((r+38)*math.cos(rad))
-        y2 = cy + int((r+38)*math.sin(rad))
-        d.line([(x1,y1),(x2,y2)], fill=BLACK, width=STROKE, joint="curve")
+        x1 = cx + int((r+14)*math.cos(rad))
+        y1 = cy + int((r+14)*math.sin(rad))
+        x2 = cx + int((r+30)*math.cos(rad))
+        y2 = cy + int((r+30)*math.sin(rad))
+        d.line([(x1,y1),(x2,y2)], fill=BLACK, width=STROKE)
     save(img, "sun")
 
-def draw_cloud():
-    img, d = new_canvas()
-    # cloud = 3 circles + base
-    d.ellipse([PAD+10, 52, PAD+55, 92], outline=BLACK, width=STROKE)
-    d.ellipse([PAD+38, 36, PAD+88, 92], outline=BLACK, width=STROKE)
-    d.ellipse([PAD+78, 52, PAD+118, 92], outline=BLACK, width=STROKE)
-    d.line([(PAD+18, 92), (SIZE-PAD-10, 92)], fill=BLACK, width=STROKE)
+def cloud():
+    img, d = canvas()
+    # 3 원 + 아래 베이스(둥글게 느낌)
+    d.ellipse([22, 58, 62, 92], outline=BLACK, width=STROKE)
+    d.ellipse([44, 44, 86, 92], outline=BLACK, width=STROKE)
+    d.ellipse([76, 58, 108, 92], outline=BLACK, width=STROKE)
+    d.line([(28, 92), (104, 92)], fill=BLACK, width=STROKE)
     save(img, "cloud")
 
-def draw_rain():
-    img, d = new_canvas()
+def rain():
+    img, d = canvas()
     # cloud
-    d.ellipse([PAD+10, 40, PAD+55, 80], outline=BLACK, width=STROKE)
-    d.ellipse([PAD+38, 24, PAD+88, 80], outline=BLACK, width=STROKE)
-    d.ellipse([PAD+78, 40, PAD+118, 80], outline=BLACK, width=STROKE)
-    d.line([(PAD+18, 80), (SIZE-PAD-10, 80)], fill=BLACK, width=STROKE)
-    # raindrops
-    for x in [PAD+32, PAD+64, PAD+96]:
-        d.line([(x, 90), (x-10, 112)], fill=BLACK, width=STROKE, joint="curve")
+    d.ellipse([22, 48, 62, 82], outline=BLACK, width=STROKE)
+    d.ellipse([44, 34, 86, 82], outline=BLACK, width=STROKE)
+    d.ellipse([76, 48, 108, 82], outline=BLACK, width=STROKE)
+    d.line([(28, 82), (104, 82)], fill=BLACK, width=STROKE)
+    # rain lines (세로 짧게)
+    for x in [44, 64, 84]:
+        d.line([(x, 94), (x, 114)], fill=BLACK, width=STROKE)
     save(img, "rain")
 
-def draw_snow():
-    img, d = new_canvas()
+def snow():
+    img, d = canvas()
     # cloud
-    d.ellipse([PAD+10, 40, PAD+55, 80], outline=BLACK, width=STROKE)
-    d.ellipse([PAD+38, 24, PAD+88, 80], outline=BLACK, width=STROKE)
-    d.ellipse([PAD+78, 40, PAD+118, 80], outline=BLACK, width=STROKE)
-    d.line([(PAD+18, 80), (SIZE-PAD-10, 80)], fill=BLACK, width=STROKE)
-    # snowflakes (simple asterisks)
-    for (x,y) in [(PAD+36, 104), (PAD+64, 112), (PAD+92, 104)]:
-        d.line([(x-10,y),(x+10,y)], fill=BLACK, width=STROKE-2)
-        d.line([(x,y-10),(x,y+10)], fill=BLACK, width=STROKE-2)
-        d.line([(x-8,y-8),(x+8,y+8)], fill=BLACK, width=STROKE-2)
-        d.line([(x-8,y+8),(x+8,y-8)], fill=BLACK, width=STROKE-2)
+    d.ellipse([22, 48, 62, 82], outline=BLACK, width=STROKE)
+    d.ellipse([44, 34, 86, 82], outline=BLACK, width=STROKE)
+    d.ellipse([76, 48, 108, 82], outline=BLACK, width=STROKE)
+    d.line([(28, 82), (104, 82)], fill=BLACK, width=STROKE)
+    # snow dots (MUJI 느낌: 점 3개)
+    for (x,y) in [(48,104),(64,112),(80,104)]:
+        d.ellipse([x-4,y-4,x+4,y+4], fill=BLACK)
     save(img, "snow")
 
-def draw_thunder():
-    img, d = new_canvas()
+def thunder():
+    img, d = canvas()
     # cloud
-    d.ellipse([PAD+10, 38, PAD+55, 78], outline=BLACK, width=STROKE)
-    d.ellipse([PAD+38, 22, PAD+88, 78], outline=BLACK, width=STROKE)
-    d.ellipse([PAD+78, 38, PAD+118, 78], outline=BLACK, width=STROKE)
-    d.line([(PAD+18, 78), (SIZE-PAD-10, 78)], fill=BLACK, width=STROKE)
-    # bolt
-    bolt = [(72,82),(54,112),(74,112),(56,142)]
+    d.ellipse([22, 46, 62, 80], outline=BLACK, width=STROKE)
+    d.ellipse([44, 32, 86, 80], outline=BLACK, width=STROKE)
+    d.ellipse([76, 46, 108, 80], outline=BLACK, width=STROKE)
+    d.line([(28, 80), (104, 80)], fill=BLACK, width=STROKE)
+    # bolt (단순한 번개)
+    bolt = [(66, 84), (54, 108), (68, 108), (56, 124)]
     d.line(bolt, fill=BLACK, width=STROKE, joint="curve")
     save(img, "thunder")
 
-def draw_fog():
-    img, d = new_canvas()
-    y = 44
-    for i in range(3):
-        d.line([(PAD, y+i*22), (SIZE-PAD, y+i*22)], fill=BLACK, width=STROKE)
+def fog():
+    img, d = canvas()
+    # 3개 얇은 수평선
+    for y in [52, 72, 92]:
+        d.line([(24, y), (104, y)], fill=BLACK, width=STROKE)
     save(img, "fog")
 
 def main():
-    draw_sun()
-    draw_cloud()
-    draw_rain()
-    draw_snow()
-    draw_thunder()
-    draw_fog()
-    print("icons generated in assets/weather/")
+    sun()
+    cloud()
+    rain()
+    snow()
+    thunder()
+    fog()
+    print("MUJI-style weather icons generated -> assets/weather/*.png")
 
 if __name__ == "__main__":
     main()
