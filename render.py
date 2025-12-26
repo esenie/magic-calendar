@@ -81,7 +81,7 @@ def main():
     font_dow    = ImageFont.truetype(BASE_FONT, 26)
     font_date   = ImageFont.truetype(BASE_FONT, 34)
     font_update = ImageFont.truetype(BASE_FONT, 16)
-    font_label  = ImageFont.truetype(BASE_FONT, 14)
+    font_label  = ImageFont.truetype(BASE_FONT, 12)
 
     # ===== Margins =====
     side_margin = 60
@@ -92,22 +92,26 @@ def main():
     uw = draw.textlength(updated, font=font_update)
     draw.text((W - side_margin - uw, 26), updated, fill=FADE, font=font_update)
 
-    # ===== Weather widget (top-left, compact + safe) =====
-    # 좌상단: 겹침 방지 위해 월 숫자 영역과 분리(고정 y=22~90)
+    font_label  = ImageFont.truetype(BASE_FONT, 12)  # 기존 14
+
+    # Weather widget
     wx = side_margin
     wy = 22
-    widget_w = 190
-    gap = 12
+    widget_w = 150   # 기존 190
+    gap = 6          # 기존 12
     col_w = (widget_w - gap) / 2
-
+    
     # Labels
     def label(x_left, t):
         tw = draw.textlength(t, font=font_label)
         draw.text((x_left + (col_w - tw)/2, wy), t, fill=FADE, font=font_label)
-
+    
     label(wx, "TODAY")
     label(wx + col_w + gap, "TMRO")
-
+    
+    icon_size = 44   # 기존 52
+    icon_y = wy + 14 # 기존 wy + 18
+   
     ensure_icons()
 
     lat = float(os.getenv("OPENWEATHER_LAT", "37.5665"))
