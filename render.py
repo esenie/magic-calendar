@@ -6,29 +6,30 @@ import os
 import requests
 import subprocess
 
-# ===== 캔버스 (세로형) =====
+# ===== Canvas =====
 W, H = 680, 960
 
-# ===== 컬러 (3색 e-ink 친화) =====
-TEXT = (30, 30, 30)
-FADE = (180, 180, 180)
+# ===== Colors (e-ink friendly) =====
+TEXT  = (30, 30, 30)
+FADE  = (180, 180, 180)
 LIGHT = (220, 220, 220)
-RED  = (200, 0, 0)
+RED   = (200, 0, 0)
 
 DOW = ["S", "M", "T", "W", "T", "F", "S"]
+ICON_DIR = "assets/weather"
 
-ICON_DIR = "assets/weather"  # PNG 아이콘 위치
+# ---------- Weather helpers ----------
 
-def code_to_kind(weather_id: int) -> str:
-    if 200 <= weather_id <= 232: return "thunder"
-    if 300 <= weather_id <= 531: return "rain"
-    if 600 <= weather_id <= 622: return "snow"
-    if 701 <= weather_id <= 781: return "fog"
-    if weather_id == 800:        return "sun"
-    if 801 <= weather_id <= 804: return "cloud"
+def code_to_kind(wid: int) -> str:
+    if 200 <= wid <= 232: return "thunder"
+    if 300 <= wid <= 531: return "rain"
+    if 600 <= wid <= 622: return "snow"
+    if 701 <= wid <= 781: return "fog"
+    if wid == 800:        return "sun"
+    if 801 <= wid <= 804: return "cloud"
     return "cloud"
 
-def get_today_tomorrow_kind(lat: float, lon: float, tzname="Asia/Seoul") -> tuple[str, str]:
+def get_today_tmro_kind(lat: float, lon: float) -> tuple[str, str]:
     api_key = os.getenv("OPENWEATHER_API_KEY", "").strip()
     if not api_key:
         return ("", "")
@@ -39,56 +40,47 @@ def get_today_tomorrow_kind(lat: float, lon: float, tzname="Asia/Seoul") -> tupl
     r.raise_for_status()
     data = r.json()
 
-    tz = pytz.timezone(tzname)
+    tz = pytz.timezone("Asia/Seoul")
     today = datetime.now(tz).date()
-    tomorrow = today + timedelta(days=1)
+    tmro = today + timedelta(days=1)
 
     picked = {}
     for item in data.get("list", []):
-        dt = datetime.fromtimestamp(item["dt"], tz).date()
-        if dt not in picked and item.get("weather"):
-            wid = int(item["weather"][0]["id"])
-            picked[dt] = code_to_kind(wid)
-        if today in picked and tomorrow in picked:
+        d = datetime.fromtimestamp(item["dt"], tz).date()
+        if d not in picked and item.get("weather"):
+            picked[d] = code_to_kind(int(item["weather"][0]["id"]))
+        if today in picked and tmro in picked:
             break
 
-    return (picked.get(today, ""), picked.get(tomorrow, ""))
+    return picked.get(today, ""), picked.get(tmro, "")
 
-def ensure_icons_exist():
-    needed = ["sun","cloud","rain","snow","thunder","fog"]
-    ok = True
-    for k in needed:
-        if not os.path.exists(os.path.join(ICON_DIR, f"{k}.png")):
-            ok = False
-            break
-    if ok:
+def ensure_icons():
+    need = ["sun","cloud","rain","snow","thunder","fog"]
+    if all(os.path.exists(os.path.join(ICON_DIR, f"{k}.png")) for k in need):
         return
-
-    # try auto-generate by running make_icons.py if present
     if os.path.exists("make_icons.py"):
-        try:
-            subprocess.run(["python", "make_icons.py"], check=True)
-        except Exception:
-            pass
+        subprocess.run(["python", "make_icons.py"], check=False)
 
-def load_icon(kind: str) -> Image.Image | None:
+def load_icon(kind: str):
     if not kind:
         return None
-    path = os.path.join(ICON_DIR, f"{kind}.png")
-    if not os.path.exists(path):
+    p = os.path.join(ICON_DIR, f"{kind}.png")
+    if not os.path.exists(p):
         return None
-    return Image.open(path).convert("RGBA")
+    return Image.open(p).convert("RGBA")
+
+# ---------- Main ----------
 
 def main():
     tz = pytz.timezone("Asia/Seoul")
     now = datetime.now(tz)
-    today_date = now.date()
+    today = now.date()
     year, month = now.year, now.month
 
     img = Image.new("RGB", (W, H), "white")
     draw = ImageDraw.Draw(img)
 
-    # ===== 폰트 =====
+    # ===== Fonts =====
     BASE_FONT = "assets/Inter-Regular.ttf"
     if not os.path.exists(BASE_FONT):
         BASE_FONT = "assets/NanumGothic.ttf"
@@ -97,119 +89,103 @@ def main():
     font_dow    = ImageFont.truetype(BASE_FONT, 26)
     font_date   = ImageFont.truetype(BASE_FONT, 34)
     font_update = ImageFont.truetype(BASE_FONT, 16)
-    font_label  = ImageFont.truetype(BASE_FONT, 18)
+    font_label  = ImageFont.truetype(BASE_FONT, 16)
 
-    # ===== 레이아웃 =====
-    top_margin = 70
+    # ===== Margins =====
+    top_margin  = 70
     side_margin = 60
 
-    # (1) 업데이트 시간 우상단 (분까지)
-    updated_txt = now.strftime("%m-%d %H:%M")
-    utw = draw.textlength(updated_txt, font=font_update)
-    draw.text((W - side_margin - utw, top_margin - 10), updated_txt, fill=FADE, font=font_update)
+    # ===== Update time (top-right) =====
+    updated = now.strftime("%m-%d %H:%M")
+    uw = draw.textlength(updated, font=font_update)
+    draw.text((W - side_margin - uw, top_margin - 10),
+              updated, fill=FADE, font=font_update)
 
-    # 월 숫자 가운데 정렬
-    month_str = str(month)
-    mw = draw.textlength(month_str, font=font_month)
-    draw.text(((W - mw) / 2, top_margin), month_str, fill=TEXT, font=font_month)
-
-    # (2) 날씨 영역 (고정 레이아웃)
-    weather_top = top_margin + 235
-    weather_h = 110
+    # ===== Weather widget (top-left, compact) =====
     weather_left = side_margin
-    weather_w = W - side_margin * 2
+    weather_top  = top_margin - 10
+    weather_w    = 220
+    gap          = 12
+    col_w        = (weather_w - gap) / 2
 
-    # 원하면 매우 연한 박스 윤곽(싫으면 주석)
-    # draw.rectangle([weather_left, weather_top, weather_left+weather_w, weather_top+weather_h], outline=LIGHT, width=2)
+    draw.text((weather_left + (col_w - draw.textlength("TODAY", font=font_label))/2,
+               weather_top),
+              "TODAY", fill=FADE, font=font_label)
 
-    # 두 칸 레이아웃
-    gap = 22
-    col_w = (weather_w - gap) / 2
-    col1_x = weather_left
-    col2_x = weather_left + col_w + gap
+    draw.text((weather_left + col_w + gap +
+               (col_w - draw.textlength("TMRO", font=font_label))/2,
+               weather_top),
+              "TMRO", fill=FADE, font=font_label)
 
-    # 라벨: TODAY / TMRO
-    def draw_label(x_left: float, text: str):
-        tw = draw.textlength(text, font=font_label)
-        draw.text((x_left + (col_w - tw)/2, weather_top + 4), text, fill=FADE, font=font_label)
-
-    draw_label(col1_x, "TODAY")
-    draw_label(col2_x, "TMRO")
-
-    # 아이콘 준비
-    ensure_icons_exist()
+    ensure_icons()
 
     lat = float(os.getenv("OPENWEATHER_LAT", "37.5665"))
     lon = float(os.getenv("OPENWEATHER_LON", "126.9780"))
-
     try:
-        kind_today, kind_tmro = get_today_tomorrow_kind(lat, lon)
+        k_today, k_tmro = get_today_tmro_kind(lat, lon)
     except Exception:
-        kind_today, kind_tmro = ("", "")
+        k_today, k_tmro = "", ""
 
-    icon_today = load_icon(kind_today)
-    icon_tmro = load_icon(kind_tmro)
+    def paste_icon(kind, x_left):
+        icon = load_icon(kind)
+        y = weather_top + 22
+        if icon:
+            icon = icon.resize((64, 64))
+            img.paste(icon,
+                      (int(x_left + (col_w - 64)/2), int(y)),
+                      icon)
 
-    def paste_icon(icon: Image.Image | None, x_left: float):
-        # 아이콘만 표시(텍스트 없음)
-        icon_y = weather_top + 32
-        if icon is None:
-            # 데이터 없으면 작은 점선/대시로라도 표시
-            dash = "—"
-            dw = draw.textlength(dash, font=font_month)
-            draw.text((x_left + (col_w - dw)/2, icon_y+6), dash, fill=LIGHT, font=font_month)
-            return
+    paste_icon(k_today, weather_left)
+    paste_icon(k_tmro, weather_left + col_w + gap)
 
-        # 아이콘 크기(고정)
-        target = 70
-        icon2 = icon.resize((target, target))
-        x = int(x_left + (col_w - target)/2)
-        y = int(icon_y)
-        img.paste(icon2, (x, y), icon2)
+    # ===== Month (centered) =====
+    mstr = str(month)
+    mw = draw.textlength(mstr, font=font_month)
+    draw.text(((W - mw)/2, top_margin),
+              mstr, fill=TEXT, font=font_month)
 
-    paste_icon(icon_today, col1_x)
-    paste_icon(icon_tmro, col2_x)
-
-    # ===== 그리드 영역 (줄 간격 넉넉) =====
+    # ===== Calendar grid =====
     grid_top = 380
     grid_bottom = 900
+    grid_w = W - side_margin*2
     grid_h = grid_bottom - grid_top
-    grid_w = W - side_margin * 2
+
     cols, rows = 7, 6
     cell_w = grid_w / cols
     cell_h = grid_h / rows
     grid_left = side_margin
 
-    # 요일
+    # DOW
     dow_y = grid_top - 55
     for c, d in enumerate(DOW):
-        x_center = grid_left + c * cell_w + cell_w / 2
-        color = RED if c in (0, 6) else TEXT
-        w_txt = draw.textlength(d, font=font_dow)
-        draw.text((x_center - w_txt / 2, dow_y), d, fill=color, font=font_dow)
+        x = grid_left + c*cell_w + cell_w/2
+        color = RED if c in (0,6) else TEXT
+        dw = draw.textlength(d, font=font_dow)
+        draw.text((x - dw/2, dow_y),
+                  d, fill=color, font=font_dow)
 
-    # 날짜
+    # Dates
     cal = calendar.Calendar(firstweekday=6)
     days = list(cal.itermonthdates(year, month))[:42]
 
     for i, d in enumerate(days):
         r, c = divmod(i, cols)
-        x0 = grid_left + c * cell_w
-        y0 = grid_top  + r * cell_h
+        x0 = grid_left + c*cell_w
+        y0 = grid_top + r*cell_h
 
         in_month = (d.month == month)
         color = TEXT if in_month else FADE
 
         s = str(d.day)
         sw = draw.textlength(s, font=font_date)
-        sx = x0 + (cell_w - sw) / 2
-        sy = y0 + (cell_h - 40) / 2
+        sx = x0 + (cell_w - sw)/2
+        sy = y0 + (cell_h - 40)/2
 
-        if d == today_date:
-            cx = x0 + cell_w / 2
-            cy = y0 + cell_h / 2
-            radius = min(cell_w, cell_h) * 0.36
-            draw.ellipse([cx - radius, cy - radius, cx + radius, cy + radius], fill=RED)
+        if d == today:
+            cx = x0 + cell_w/2
+            cy = y0 + cell_h/2
+            r0 = min(cell_w, cell_h)*0.36
+            draw.ellipse([cx-r0, cy-r0, cx+r0, cy+r0], fill=RED)
             draw.text((sx, sy), s, fill="white", font=font_date)
         else:
             draw.text((sx, sy), s, fill=color, font=font_date)
