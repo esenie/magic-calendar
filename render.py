@@ -273,7 +273,7 @@ def main():
         # --- Today underline (빨간 밑줄) ---
         if day == today:
             # 숫자 아래에 얇은 밑줄
-            line_y = sy + 34
+            line_y = sy + 36
             line_x1 = x0 + cell_w*0.30
             line_x2 = x0 + cell_w*0.70
             draw.line([(line_x1, line_y), (line_x2, line_y)], fill=RED, width=4)
@@ -281,7 +281,7 @@ def main():
         # --- Events under date (max 2 lines, FADE, ellipsis, red dot bullet) ---
         evs = events_by_date.get(day, [])
         if evs:
-            base_y = y0 + int(cell_h * 0.99)
+            base_y = y0 + int(cell_h * 0.85)
             left_pad = x0 + 10
             dot_r = 3
             text_x = left_pad + 10  # 점 + 간격
