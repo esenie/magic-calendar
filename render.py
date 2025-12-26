@@ -137,7 +137,6 @@ def main():
     font_month  = ImageFont.truetype(BASE_FONT, 200)
     font_dow    = ImageFont.truetype(BASE_FONT, 26)
     font_date   = ImageFont.truetype(BASE_FONT, 34)
-    font_update = ImageFont.truetype(BASE_FONT, 16)
     font_label  = ImageFont.truetype(BASE_FONT, 12)  # weather labels
     font_event  = ImageFont.truetype(BASE_FONT, 16)  # events under date
 
@@ -147,9 +146,9 @@ def main():
 
     # ===== Update time (top-right, minute precision) =====
     updated = now.strftime("%m-%d %H:%M")
-    uw = draw.textlength(updated, font=font_update)
-    draw.text((W - side_margin - uw, 26), updated, fill=FADE, font=font_update)
-
+    uw = draw.textlength(updated, font=font_label)
+    draw.text((W - side_margin - uw, 26), updated, fill=FADE, font=font_label)
+    
     # ===== Weather widget (top-left, compact) =====
     wx = side_margin
     wy = 22
@@ -269,3 +268,11 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+ical_url = os.getenv("ICAL_URL", "").strip()
+debug_ical = f"ICS:{'OK' if ical_url else 'NO_URL'}"
+debug_cnt = f"EV:{sum(len(v) for v in events_by_date.values())}"
+
+dbg = f"{debug_ical} {debug_cnt}"
+dw = draw.textlength(dbg, font=font_label)
+draw.text((W - side_margin - dw, 44), dbg, fill=FADE, font=font_label)
