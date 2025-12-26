@@ -19,7 +19,7 @@ jobs:
           python-version: "3.11"
 
       - run: pip install -r requirements.txt
-
+      - run: python make_icons.py
       # ✅ 여기서 단 한 번만 실행 + env 포함
       - name: Render calendar image
         run: python render.py
