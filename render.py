@@ -281,7 +281,7 @@ def main():
         # --- Events under date (max 2 lines, FADE, ellipsis, red dot bullet) ---
         evs = events_by_date.get(day, [])
         if evs:
-            base_y = y0 + int(cell_h * 0.62)
+            base_y = y0 + int(cell_h * 0.74)
             left_pad = x0 + 10
             dot_r = 3
             text_x = left_pad + 10  # 점 + 간격
@@ -291,7 +291,7 @@ def main():
                 t = t.replace("\n", " ").strip()
                 t = truncate_to_width(draw, t, font_event, max_text_w)
 
-                ty = base_y + idx * 16  # 줄간격(작게)
+                ty = base_y + idx * 18  # 줄간격(작게)
                 # red dot
                 cx = left_pad + dot_r
                 cy = ty + 7
