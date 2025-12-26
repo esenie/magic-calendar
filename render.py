@@ -81,7 +81,10 @@ def fetch_events_by_date(tzname="Asia/Seoul", max_per_day=2):
     url = os.getenv("ICAL_URL", "").strip()
     if not url:
         return {}
-
+    # webcal:// 은 requests가 못 가져오므로 https:// 로 변환
+    if url.startswith("webcal://"):
+        url = "https://" + url[len("webcal://"):]
+        
     r = requests.get(url, timeout=20)
     r.raise_for_status()
 
