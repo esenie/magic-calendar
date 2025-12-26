@@ -25,9 +25,9 @@ jobs:
         run: python render.py
         env:
           OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
-          OPENWEATHER_LAT: "37.5665"
-          OPENWEATHER_LON: "126.9780"
-
+          OPENWEATHER_LAT: "37.5041"
+          OPENWEATHER_LON: "126.9042"
+          ICAL_URL: ${{ secrets.ICAL_URL }}
       - name: Commit image
         run: |
           git config user.name "github-actions"
