@@ -281,7 +281,7 @@ def main():
         # --- Events under date (max 2 lines, FADE, ellipsis, red dot bullet) ---
         evs = events_by_date.get(day, [])
         if evs:
-            base_y = y0 + int(cell_h * 0.82)
+            base_y = y0 + int(cell_h * 0.80)
             left_pad = x0 + 10
             dot_r = 3
             text_x = left_pad + 10  # 점 + 간격
