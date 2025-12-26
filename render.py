@@ -301,6 +301,7 @@ def main():
 
     os.makedirs("docs", exist_ok=True)
     img.save("docs/latest.png")
+    img.save("docs/latest.bmp")
 
 
 if __name__ == "__main__":
