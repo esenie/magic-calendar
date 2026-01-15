@@ -305,7 +305,7 @@ def main():
         # Events
         evs = events_by_date.get(day, [])
         if evs:
-            base_y = y0 + int(cell_h * 0.66)
+            base_y = y0 + int(cell_h * 0.74)
             left_pad = x0 + 10
             text_x = left_pad + 10
             max_text_w = (x0 + cell_w) - text_x - 6
