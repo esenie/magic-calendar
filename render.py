@@ -187,8 +187,8 @@ def main():
     font_label = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 12)
     font_temp  = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 11)  # ✅ 아이콘 아래 온도
 
-    side_margin = 60
-    top_margin  = 70
+    side_margin = 30
+    top_margin  = 35
 
     # ===== Weather =====
     wx, wy = side_margin, 22
@@ -247,7 +247,7 @@ def main():
     draw.text(((W - mw)/2, top_margin), mstr, fill=TEXT, font=font_month)
 
     month_bottom = top_margin + font_month.size
-    month_to_dow_gap = 30
+    month_to_dow_gap = 55
 
     # ===== Update time =====
     updated = now.strftime("%m-%d %H:%M")
@@ -256,8 +256,8 @@ def main():
 
     # ===== Grid layout =====
     dow_y = month_bottom + month_to_dow_gap
-    grid_top = dow_y + 45
-    grid_bottom = 950
+    grid_top = dow_y + 35
+    grid_bottom = H-20
 
     grid_w = W - side_margin*2
     grid_h = grid_bottom - grid_top
