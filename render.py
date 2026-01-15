@@ -34,10 +34,16 @@ def code_to_kind(wid: int) -> str:
     if 801 <= wid <= 804: return "cloud"
     return "cloud"
 
-def get_today_tmro_kind(lat: float, lon: float):
+
+def get_today_tmro_weather(lat: float, lon: float):
+    """
+    return:
+      (today_kind, tmro_kind, (tmin_today, tmax_today), (tmin_tmro, tmax_tmro))
+      온도는 정수(°C). 값이 없으면 None.
+    """
     api_key = os.getenv("OPENWEATHER_API_KEY", "").strip()
     if not api_key:
-        return ("", "")
+        return ("", "", (None, None), (None, None))
 
     url = "https://api.openweathermap.org/data/2.5/forecast"
     params = {"lat": lat, "lon": lon, "appid": api_key, "units": "metric"}
@@ -49,15 +55,45 @@ def get_today_tmro_kind(lat: float, lon: float):
     today = datetime.now(tz).date()
     tmro = today + timedelta(days=1)
 
-    picked = {}
+    kind_by_day = {}
+    tmin_by_day = {}
+    tmax_by_day = {}
+
     for item in data.get("list", []):
+        if "dt" not in item:
+            continue
         d = datetime.fromtimestamp(item["dt"], tz).date()
-        if d not in picked and item.get("weather"):
-            picked[d] = code_to_kind(int(item["weather"][0]["id"]))
-        if today in picked and tmro in picked:
+
+        main = item.get("main", {})
+        t = main.get("temp")
+        if isinstance(t, (int, float)):
+            tmin_by_day[d] = t if d not in tmin_by_day else min(tmin_by_day[d], t)
+            tmax_by_day[d] = t if d not in tmax_by_day else max(tmax_by_day[d], t)
+
+        w = item.get("weather", [])
+        if d not in kind_by_day and w:
+            wid = int(w[0].get("id", 800))
+            kind_by_day[d] = code_to_kind(wid)
+
+        if (today in kind_by_day and tmro in kind_by_day
+            and today in tmin_by_day and today in tmax_by_day
+            and tmro in tmin_by_day and tmro in tmax_by_day):
             break
 
-    return picked.get(today, ""), picked.get(tmro, "")
+    def to_int_pair(d):
+        mn = tmin_by_day.get(d, None)
+        mx = tmax_by_day.get(d, None)
+        if mn is None or mx is None:
+            return (None, None)
+        return (int(round(mn)), int(round(mx)))
+
+    return (
+        kind_by_day.get(today, ""),
+        kind_by_day.get(tmro, ""),
+        to_int_pair(today),
+        to_int_pair(tmro),
+    )
+
 
 def ensure_icons():
     need = ["sun","cloud","rain","snow","thunder","fog"]
@@ -65,6 +101,7 @@ def ensure_icons():
         return
     if os.path.exists("make_icons.py"):
         subprocess.run(["python", "make_icons.py"], check=False)
+
 
 def load_icon(kind: str):
     if not kind:
@@ -119,6 +156,7 @@ def fetch_events_by_date(tzname="Asia/Seoul", max_per_day=2):
 
     return events
 
+
 def truncate(draw, text, font, max_w):
     if draw.textlength(text, font=font) <= max_w:
         return text
@@ -147,6 +185,7 @@ def main():
     font_dow   = ImageFont.truetype("assets/NanumGothicBold.ttf", 30)
     font_event = ImageFont.truetype("assets/NanumSquareR.ttf", 13)
     font_label = ImageFont.truetype("assets/Inter_28pt-ExtraLight.ttf", 12)
+    font_temp  = ImageFont.truetype("assets/Inter_28pt-ExtraLight.ttf", 11)  # ✅ 아이콘 아래 온도
 
     side_margin = 60
     top_margin  = 70
@@ -166,7 +205,9 @@ def main():
     ensure_icons()
     lat = float(os.getenv("OPENWEATHER_LAT", "37.5665"))
     lon = float(os.getenv("OPENWEATHER_LON", "126.9780"))
-    k_today, k_tmro = get_today_tmro_kind(lat, lon)
+
+    # ✅ 아이콘 종류 + 오늘/내일 최저/최고
+    k_today, k_tmro, (tmin0, tmax0), (tmin1, tmax1) = get_today_tmro_weather(lat, lon)
 
     icon_size = 44
     icon_y = wy + 14
@@ -181,6 +222,24 @@ def main():
 
     paste_icon(k_today, wx)
     paste_icon(k_tmro, wx + col_w + gap)
+
+    # ✅ Temps under icons
+    temp_y = icon_y + icon_size + 2  # 아이콘 바로 아래
+
+    def fmt_pair(mn, mx):
+        if mn is None or mx is None:
+            return ""
+        return f"{mn}°/{mx}°"
+
+    def draw_temp(x_left, mn, mx):
+        t = fmt_pair(mn, mx)
+        if not t:
+            return
+        tw = draw.textlength(t, font=font_temp)
+        draw.text((x_left + (col_w - tw)/2, temp_y), t, fill=TEXT, font=font_temp)
+
+    draw_temp(wx, tmin0, tmax0)
+    draw_temp(wx + col_w + gap, tmin1, tmax1)
 
     # ===== Month =====
     mstr = str(month)
