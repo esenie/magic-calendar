@@ -17,12 +17,12 @@ except Exception:
 W, H = 680, 960
 
 # ===== Colors (e-ink friendly) =====
-TEXT  = (30, 30, 30)
-FADE  = (180, 180, 180)
+# 1) 회색(FADE) 쓰던 모든 글씨를 검정으로 통일
+TEXT  = (0, 0, 0)
+FADE  = TEXT
 RED   = (200, 0, 0)
 
 DOW = ["S", "M", "T", "W", "T", "F", "S"]
-
 ICON_DIR = "assets/weather"
 
 
@@ -146,19 +146,26 @@ def main():
     today = now.date()
     year, month = now.year, now.month
 
-    from PIL import Image
     img = Image.new("RGB", (W, H), "white")
     draw = ImageDraw.Draw(img)
 
-    BASE_FONT = "assets/Inter-Regular.ttf"
-    if not os.path.exists(BASE_FONT):
-        BASE_FONT = "assets/NanumGothic.ttf"
+    # 2) 요일/일자: 나눔고딕 Bold 사용(업로드 완료 가정)
+    #    - month(큰 숫자)는 Regular 유지해도 되고, Bold로 바꿔도 됨(원하면 바꿔도 OK)
+    FONT_REG = "assets/Inter-Regular.ttf"
+    if not os.path.exists(FONT_REG):
+        FONT_REG = "assets/NanumGothic.ttf"
 
-    font_month  = ImageFont.truetype(BASE_FONT, 200)
-    font_dow    = ImageFont.truetype(BASE_FONT, 26)
-    font_date   = ImageFont.truetype(BASE_FONT, 34)
-    font_label  = ImageFont.truetype(BASE_FONT, 12)  # TODAY/TMRO + update time
-    font_event  = ImageFont.truetype(BASE_FONT, 13)  # 일정 더 작게
+    FONT_BOLD = "assets/NanumGothicBold.ttf"
+    if not os.path.exists(FONT_BOLD):
+        # 혹시 파일명이 다르면 여기만 바꿔주면 됨
+        FONT_BOLD = "assets/NanumGothic-Bold.ttf"
+
+    # 폰트 크기 조정: 굵게 + 약간 키워 가독성 업
+    font_month  = ImageFont.truetype(FONT_REG, 200)
+    font_dow    = ImageFont.truetype(FONT_BOLD, 30)  # (기존 26) -> 굵게 + 확대
+    font_date   = ImageFont.truetype(FONT_BOLD, 40)  # (기존 34) -> 굵게 + 확대
+    font_label  = ImageFont.truetype(FONT_REG, 12)   # TODAY/TMRO + update time
+    font_event  = ImageFont.truetype(FONT_REG, 13)   # 일정
 
     side_margin = 60
     top_margin  = 90
@@ -168,7 +175,6 @@ def main():
     if holidays is not None:
         try:
             kr = holidays.KR(years=[year])
-            # 다음달(회색으로 보이는 1~3 같은 날짜)도 공휴일이면 표시되게 year+1도 추가
             kr2 = holidays.KR(years=[year+1])
             kr_holidays = set(kr.keys()) | set(kr2.keys())
         except Exception:
@@ -214,20 +220,21 @@ def main():
     draw.text(((W - mw)/2, top_margin), mstr, fill=TEXT, font=font_month)
 
     # ===== iCal events =====
-    events_by_date = {}
     try:
         events_by_date = fetch_events_by_date(max_per_day=2)
     except Exception:
         events_by_date = {}
 
-    # ===== Update time (top-right) - SAME size as TODAY/TMRO =====
+    # ===== Update time (top-right) =====
     updated = now.strftime("%m-%d %H:%M")
     uw = draw.textlength(updated, font=font_label)
     draw.text((W - side_margin - uw, 22), updated, fill=FADE, font=font_label)
 
     # ===== Calendar grid =====
-    grid_top = 380
-    grid_bottom = 900
+    # 3) 아래 여백 줄이기 + 날짜 위아래 간격(셀 높이) 늘리기
+    #    - grid_bottom을 더 아래로 내리고, grid_top을 살짝 올려 셀 높이를 키움
+    grid_top = 355          # (기존 380) -> 위로 올려서 캘린더 영역 늘림
+    grid_bottom = 950       # (기존 900) -> 아래로 내려서 하단 여백 최소화
     grid_w = W - side_margin*2
     grid_h = grid_bottom - grid_top
     cols, rows = 7, 6
@@ -235,15 +242,15 @@ def main():
     cell_h = grid_h / rows
     grid_left = side_margin
 
-    # DOW row (일요일 빨강, 토요일은 파랑 불가 → 기본색 유지)
-    dow_y = grid_top - 55
+    # DOW row
+    dow_y = grid_top - 50   # (기존 -55) 약간 내려서 보기 좋게
     for c, dch in enumerate(DOW):
         x = grid_left + c*cell_w + cell_w/2
         color = RED if c == 0 else TEXT
         dw = draw.textlength(dch, font=font_dow)
         draw.text((x - dw/2, dow_y), dch, fill=color, font=font_dow)
 
-    # Dates (공휴일/일요일 빨강)
+    # Dates
     cal = calendar.Calendar(firstweekday=6)  # Sunday-first
     days = list(cal.itermonthdates(year, month))[:42]
 
@@ -253,50 +260,51 @@ def main():
         y0 = grid_top  + r*cell_h
 
         in_month = (day.month == month)
-
         is_sunday = (c == 0)
         is_holiday = (day in kr_holidays)
 
-        # 날짜색: 공휴일/일요일=빨강, 그 외=검정, 다른달=회색(단, 공휴일이면 빨강 유지)
+        # 날짜색: 공휴일/일요일=빨강, 그 외=검정, 다른달=검정(=FADE가 TEXT로 통일됨)
         if is_holiday or is_sunday:
             date_color = RED
         else:
             date_color = TEXT if in_month else FADE
 
-        # 날짜 숫자 위치(가운데)
+        # 날짜 숫자 위치: 위아래 공간 더 쓰도록 "좀 더 위로" 배치 + 이벤트 공간 확보
         s = str(day.day)
         sw = draw.textlength(s, font=font_date)
         sx = x0 + (cell_w - sw)/2
-        sy = y0 + (cell_h - 40)/2
+
+        # 기존: sy = y0 + (cell_h - 40)/2
+        # 개선: 위쪽으로 올려서 아래 이벤트/여백을 더 채움
+        sy = y0 + int(cell_h * 0.30)
+
         draw.text((sx, sy), s, fill=date_color, font=font_date)
 
-        # --- Today underline (빨간 밑줄) ---
+        # Today underline
         if day == today:
-            # 숫자 아래에 얇은 밑줄
-            line_y = sy + 36
-            line_x1 = x0 + cell_w*0.30
-            line_x2 = x0 + cell_w*0.70
-            draw.line([(line_x1, line_y), (line_x2, line_y)], fill=RED, width=2)
+            line_y = sy + 42  # font_date 커졌으니 밑줄도 약간 아래로
+            line_x1 = x0 + cell_w*0.28
+            line_x2 = x0 + cell_w*0.72
+            draw.line([(line_x1, line_y), (line_x2, line_y)], fill=RED, width=3)
 
-        # --- Events under date (max 2 lines, FADE, ellipsis, red dot bullet) ---
+        # Events under date (max 2 lines)
         evs = events_by_date.get(day, [])
         if evs:
-            base_y = y0 + int(cell_h * 0.76)
+            # 날짜가 위로 올라갔으니 이벤트는 중하단으로 넉넉히
+            base_y = y0 + int(cell_h * 0.66)
             left_pad = x0 + 10
             dot_r = 3
-            text_x = left_pad + 10  # 점 + 간격
+            text_x = left_pad + 10
             max_text_w = (x0 + cell_w) - text_x - 6
 
             for idx, t in enumerate(evs[:2]):
                 t = t.replace("\n", " ").strip()
                 t = truncate_to_width(draw, t, font_event, max_text_w)
 
-                ty = base_y + idx * 18  # 줄간격(작게)
-                # red dot
+                ty = base_y + idx * 18
                 cx = left_pad + dot_r
                 cy = ty + 7
                 draw.ellipse([cx-dot_r, cy-dot_r, cx+dot_r, cy+dot_r], fill=RED)
-                # text
                 draw.text((text_x, ty), t, fill=FADE, font=font_event)
 
     os.makedirs("docs", exist_ok=True)
