@@ -181,11 +181,11 @@ def main():
     # Fonts
     # =========================
     font_month = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 200)
-    font_date  = ImageFont.truetype("assets/Inter_28pt-ExtraLight.ttf", 40)
+    font_date  = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 40)
     font_dow   = ImageFont.truetype("assets/NanumGothicBold.ttf", 30)
     font_event = ImageFont.truetype("assets/NanumSquareR.ttf", 13)
-    font_label = ImageFont.truetype("assets/Inter_28pt-ExtraLight.ttf", 12)
-    font_temp  = ImageFont.truetype("assets/Inter_28pt-ExtraLight.ttf", 11)  # ✅ 아이콘 아래 온도
+    font_label = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 12)
+    font_temp  = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 11)  # ✅ 아이콘 아래 온도
 
     side_margin = 60
     top_margin  = 70
