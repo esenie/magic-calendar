@@ -232,6 +232,10 @@ def main():
     mstr = str(month)
     mw = draw.textlength(mstr, font=font_month)
     draw.text(((w2 - mw) / 2, top_margin), mstr, fill=TEXT, font=font_month)
+    # month text bottom y (폰트 크기 기반, 자동)
+    month_bottom = top_margin + font_month.size
+    month_to_dow_gap = 30  # 월과 요일 사이 간격(조절 포인트)
+
 
     # ===== iCal events =====
     try:
@@ -252,7 +256,7 @@ def main():
     grid_left = side_margin
 
     # DOW row
-    dow_y = grid_top - int(52 * SCALE)
+    dow_y = month_bottom + month_to_dow_gap
     for c, dch in enumerate(DOW):
         x = grid_left + c * cell_w + cell_w / 2
         color = RED if c == 0 else TEXT  # 일요일 빨강
