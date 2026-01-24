@@ -16,6 +16,7 @@ W2, H2 = W * SCALE, H * SCALE
 
 # Colors
 TEXT = (0, 0, 0)
+FADE = (200, 200, 200) # 이전/다음달용 연한 회색
 RED  = (200, 0, 0)
 DOW = ["S", "M", "T", "W", "T", "F", "S"]
 ICON_DIR = "assets/weather"
@@ -45,15 +46,28 @@ def get_5day_forecast(lat, lon, tzname="Asia/Seoul"):
         data = r.json()
         tz = pytz.timezone(tzname)
         today = datetime.now(tz).date()
-        forecasts, seen = [], set()
+        
+        daily_data = {}
         for item in data.get("list", []):
             dt = datetime.fromtimestamp(item["dt"], tz)
             d = dt.date()
-            if d > today and d not in seen and dt.hour >= 12:
-                forecasts.append({"date": d, "kind": code_to_kind(int(item["weather"][0]["id"])), "temp": item["main"]["temp"]})
-                seen.add(d)
-            if len(forecasts) >= 5: break
-        return forecasts
+            if d <= today: continue
+            
+            if d not in daily_data:
+                daily_data[d] = {"min": item["main"]["temp"], "max": item["main"]["temp"], "kind": item["weather"][0]["id"]}
+            else:
+                daily_data[d]["min"] = min(daily_data[d]["min"], item["main"]["temp"])
+                daily_data[d]["max"] = max(daily_data[d]["max"], item["main"]["temp"])
+        
+        result = []
+        for d in sorted(daily_data.keys())[:5]:
+            result.append({
+                "date": d, 
+                "kind": code_to_kind(daily_data[d]["kind"]),
+                "min": daily_data[d]["min"],
+                "max": daily_data[d]["max"]
+            })
+        return result
     except: return []
 
 def fetch_events_by_date(tzname="Asia/Seoul", max_per_day=2):
@@ -99,32 +113,34 @@ def main():
 
     # Fonts
     font_month = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 230 * SCALE)
-    font_date  = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 46 * SCALE)
+    font_date  = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 44 * SCALE)
     font_dow   = ImageFont.truetype("assets/NanumGothicBold.ttf", 32 * SCALE)
-    font_event = ImageFont.truetype("assets/NanumSquareR.ttf", 16 * SCALE)
+    font_event = ImageFont.truetype("assets/NanumSquareR.ttf", 15 * SCALE)
     font_label = ImageFont.truetype("assets/Inter_28pt-ExtraLight.ttf", 14 * SCALE)
     font_temp  = ImageFont.truetype("assets/Inter_28pt-ExtraLight.ttf", 13 * SCALE)
 
-    # Layout Parameters
     SIDE_MARGIN = 15 * SCALE
     TOP_MARGIN = 20 * SCALE
-    BOTTOM_WIDGET_H = 140 * SCALE # 하단 예보 높이
+    BOTTOM_WIDGET_H = 150 * SCALE 
 
-    # 1. Update Time (Top-Right)
+    # 1. Update Time
     updated = now.strftime("%Y-%m-%d %H:%M")
     uw = draw2.textlength(updated, font=font_label)
     draw2.text((W2 - SIDE_MARGIN - uw, TOP_MARGIN), updated, fill=TEXT, font=font_label)
 
-    # 2. Big Month Number
+    # 2. Month (간격 확보를 위해 TOP_MARGIN에서 시작)
     mstr = str(month)
     mw = draw2.textlength(mstr, font=font_month)
-    draw2.text(((W2 - mw) / 2, TOP_MARGIN), mstr, fill=TEXT, font=font_month)
+    draw2.text(((W2 - mw) / 2, TOP_MARGIN - 10*SCALE), mstr, fill=TEXT, font=font_month)
 
-    # 3. Calendar Grid Calculation
-    grid_top = TOP_MARGIN + (210 * SCALE)
-    grid_bottom = H2 - BOTTOM_WIDGET_H - (10 * SCALE)
+    # 3. Grid Calculation (요일이 숫자 '1'과 겹치지 않게 grid_top 조정)
+    grid_top = TOP_MARGIN + (260 * SCALE) # 숫자 아래로 넉넉히 내림
+    grid_bottom = H2 - BOTTOM_WIDGET_H - (20 * SCALE)
+    
     cell_w = (W2 - 2 * SIDE_MARGIN) / 7
-    cell_h = (grid_bottom - grid_top) / 7 # 1(요일) + 6(날짜) = 7줄
+    # 요일 행과 날짜 6행을 포함한 높이 계산
+    total_grid_h = grid_bottom - grid_top
+    cell_h = total_grid_h / 7 
 
     # Draw DOW
     for c, dch in enumerate(DOW):
@@ -134,37 +150,39 @@ def main():
         draw2.text((x - dw / 2, grid_top), dch, fill=color, font=font_dow)
 
     # Draw Days
-    grid_actual_top = grid_top + (50 * SCALE)
+    grid_actual_top = grid_top + (60 * SCALE) # 요일 문구와 날짜 숫자 사이 간격
     cal_obj = calendar.Calendar(firstweekday=6)
     days = list(cal_obj.itermonthdates(year, month))[:42]
     events = fetch_events_by_date()
 
     for i, day in enumerate(days):
         r, c = divmod(i, 7)
-        x0, y0 = SIDE_MARGIN + c * cell_w, grid_actual_top + r * ((grid_bottom - grid_actual_top)/6)
+        x0 = SIDE_MARGIN + c * cell_w
+        y0 = grid_actual_top + r * ((grid_bottom - grid_actual_top)/6)
         
         # Date Number
         d_color = RED if c == 0 else TEXT
-        if day.month != month: d_color = (180, 180, 180) # 이전/다음달 흐리게
+        if day.month != month: d_color = FADE 
         
         ds = str(day.day)
         dw = draw2.textlength(ds, font=font_date)
-        draw2.text((x0 + (cell_w - dw)/2, y0 + 10*SCALE), ds, fill=d_color, font=font_date)
+        # 날짜 숫자를 셀 상단에 배치
+        draw2.text((x0 + (cell_w - dw)/2, y0), ds, fill=d_color, font=font_date)
 
         # Today Underline
         if day == now.date():
             ux = x0 + cell_w * 0.3
-            draw2.line([(ux, y0 + 65*SCALE), (x0 + cell_w * 0.7, y0 + 65*SCALE)], fill=RED, width=3)
+            draw2.line([(ux, y0 + 55*SCALE), (x0 + cell_w * 0.7, y0 + 55*SCALE)], fill=RED, width=3)
 
-        # Events
+        # Events (날짜 숫자와 겹치지 않게 y0 + 65*SCALE 부터 시작)
         day_evs = events.get(day, [])
         for idx, ev in enumerate(day_evs):
-            ev_y = y0 + (75 * SCALE) + (idx * 22 * SCALE)
-            txt = truncate(draw2, ev, font_event, cell_w - 20*SCALE)
+            ev_y = y0 + (68 * SCALE) + (idx * 22 * SCALE)
+            txt = truncate(draw2, ev, font_event, cell_w - 10*SCALE)
             tw = draw2.textlength(txt, font=font_event)
             draw2.text((x0 + (cell_w - tw)/2, ev_y), txt, fill=TEXT, font=font_event)
 
-    # 4. Bottom 5-Day Forecast
+    # 4. Bottom 5-Day Forecast (Min/Max 추가)
     forecasts = get_5day_forecast(lat, lon)
     if forecasts:
         line_y = H2 - BOTTOM_WIDGET_H
@@ -180,9 +198,9 @@ def main():
             if icon:
                 icon = icon.resize((50*SCALE, 50*SCALE))
                 img2.paste(icon, (int(fx + (f_box_w - 50*SCALE)/2), int(line_y + 45*SCALE)), icon)
-            # Temp
-            t_str = f"{int(round(f['temp']))}°"
-            draw2.text((fx + (f_box_w - draw2.textlength(t_str, font=font_temp))/2, line_y + 100*SCALE), t_str, fill=TEXT, font=font_temp)
+            # Temp (Min/Max)
+            t_str = f"{int(round(f['min']))}°/{int(round(f['max']))}°"
+            draw2.text((fx + (f_box_w - draw2.textlength(t_str, font=font_temp))/2, line_y + 105*SCALE), t_str, fill=TEXT, font=font_temp)
 
     # Final Save
     img = img2.resize((W, H), resample=Image.Resampling.LANCZOS)
