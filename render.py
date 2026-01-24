@@ -274,14 +274,20 @@ def main():
         date_h = bbox[3] - bbox[1]
 
         # Today underline (글자 바로 아래)
+        # Today underline (글자 바로 아래, 글자 폭에 맞춰)
         if day == today:
-            uy = date_y + date_h + underline_pad
+            # 숫자 bbox 기반으로 "숫자 바로 아래"에 붙여서 밑줄
+            # date_y: 숫자 y, date_h: 숫자 높이, sx: 숫자 x, sw: 숫자 폭
+            uy = date_y + date_h - int(2 * SCALE)   # ← 밑줄을 위로 끌어올림(겹침 방지)
+        
+            ux1 = sx + int(sw * 0.08)               # ← 숫자 폭에 맞춰 밑줄 길이도 조정
+            ux2 = sx + int(sw * 0.92)
+        
             draw2.line(
-                [(x0 + cell_w * 0.30, uy), (x0 + cell_w * 0.70, uy)],
+                [(ux1, uy), (ux2, uy)],
                 fill=RED,
                 width=max(1, int(2 * SCALE))
             )
-
         # Events (겹침 방지: 날짜 높이 기반으로 아래에 배치)
         evs = events_by_date.get(day, [])
         if evs:
