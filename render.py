@@ -22,7 +22,7 @@ W2, H2 = W * SCALE, H * SCALE
 # Colors (E-Ink friendly)
 # =========================
 TEXT = (0, 0, 0)
-FADE = TEXT  # keep all text black (e-ink)
+FADE = TEXT
 RED  = (200, 0, 0)
 
 DOW = ["S", "M", "T", "W", "T", "F", "S"]
@@ -55,18 +55,14 @@ def load_icon(kind: str):
         return None
     return Image.open(p).convert("RGBA")
 
-def fetch_5day_forecast(lat: float, lon: float, tzname="Asia/Seoul", days=5):
+def get_today_tmro_kind_and_temps(lat: float, lon: float, tzname="Asia/Seoul"):
     """
-    OpenWeather 3-hour forecast -> group by local date
-    return list of dict:
-      [{"date": date, "kind": "sun", "tmin": 1.2, "tmax": 7.8}, ...] length=days
-    Rules:
-      - kind: pick entry closest to 12:00 local time (fallback first entry of that day)
-      - tmin/tmax: use main.temp_min / main.temp_max across the day
+    Returns:
+      (today_kind, tmro_kind, (tmin_today, tmax_today), (tmin_tmro, tmax_tmro))
     """
     api_key = os.getenv("OPENWEATHER_API_KEY", "").strip()
     if not api_key:
-        return []
+        return ("", "", (None, None), (None, None))
 
     url = "https://api.openweathermap.org/data/2.5/forecast"
     params = {"lat": lat, "lon": lon, "appid": api_key, "units": "metric"}
@@ -76,57 +72,36 @@ def fetch_5day_forecast(lat: float, lon: float, tzname="Asia/Seoul", days=5):
 
     tz = pytz.timezone(tzname)
     today = datetime.now(tz).date()
+    tmro = today + timedelta(days=1)
 
-    # group items by date
-    by_day = {}
+    picked_kind = {}
+    tmin = {today: None, tmro: None}
+    tmax = {today: None, tmro: None}
+
     for item in data.get("list", []):
         dt = datetime.fromtimestamp(item["dt"], tz)
         d = dt.date()
-        if d < today:
+        if d not in (today, tmro):
             continue
-        by_day.setdefault(d, []).append((dt, item))
 
-    out = []
-    for d in sorted(by_day.keys()):
-        if len(out) >= days:
-            break
-        items = by_day[d]
+        if d not in picked_kind and item.get("weather"):
+            wid = int(item["weather"][0]["id"])
+            picked_kind[d] = code_to_kind(wid)
 
-        # icon/kind: closest to 12:00
-        target = datetime(d.year, d.month, d.day, 12, 0, 0, tzinfo=tz)
-        best = None
-        best_dist = None
-        for dt, item in items:
-            dist = abs((dt - target).total_seconds())
-            if best_dist is None or dist < best_dist:
-                best_dist = dist
-                best = item
+        main = item.get("main", {})
+        temp = main.get("temp")
+        if isinstance(temp, (int, float)):
+            if tmin[d] is None or temp < tmin[d]:
+                tmin[d] = temp
+            if tmax[d] is None or temp > tmax[d]:
+                tmax[d] = temp
 
-        # fallback: first item
-        if best is None:
-            best = items[0][1]
-
-        kind = ""
-        if best.get("weather"):
-            wid = int(best["weather"][0]["id"])
-            kind = code_to_kind(wid)
-
-        # min/max using temp_min/temp_max
-        tmin = None
-        tmax = None
-        for _, item in items:
-            main = item.get("main", {})
-            lo = main.get("temp_min", main.get("temp"))
-            hi = main.get("temp_max", main.get("temp"))
-
-            if isinstance(lo, (int, float)):
-                tmin = lo if tmin is None else min(tmin, lo)
-            if isinstance(hi, (int, float)):
-                tmax = hi if tmax is None else max(tmax, hi)
-
-        out.append({"date": d, "kind": kind, "tmin": tmin, "tmax": tmax})
-
-    return out
+    return (
+        picked_kind.get(today, ""),
+        picked_kind.get(tmro, ""),
+        (tmin.get(today), tmax.get(today)),
+        (tmin.get(tmro), tmax.get(tmro)),
+    )
 
 # -------------------------
 # ICS helpers
@@ -202,52 +177,89 @@ def main():
     # -------------------------
     # Fonts (scaled)
     # -------------------------
-    font_month = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 235 * SCALE)
-    font_date  = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 44 * SCALE)
-    font_dow   = ImageFont.truetype("assets/NanumGothicBold.ttf", 32 * SCALE)
+    font_month = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 220 * SCALE)
+    font_date  = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 42 * SCALE)
+    font_dow   = ImageFont.truetype("assets/NanumGothicBold.ttf", 30 * SCALE)
+
+    # 일정 폰트: 요청대로 NanumSquareEB.ttf 사용
+    # (파일명이 실제로 NanumSquareEB.ttf 인지 확인)
     font_event = ImageFont.truetype("assets/NanumSquareEB.ttf", 14 * SCALE)
 
     font_label = ImageFont.truetype("assets/Inter_28pt-ExtraLight.ttf", 12 * SCALE)
-    font_wday  = ImageFont.truetype("assets/NanumGothicBold.ttf", 14 * SCALE)  # forecast day label
-    font_temp  = ImageFont.truetype("assets/Inter_28pt-ExtraLight.ttf", 12 * SCALE)
+    font_temp  = ImageFont.truetype("assets/Inter_28pt-ExtraLight.ttf", 11 * SCALE)
 
     # -------------------------
-    # Layout: minimize margins
+    # Layout (FULLSCREEN tuned)
     # -------------------------
-    side_margin = 6 * SCALE
-    top_margin  = 4 * SCALE
-    bottom_margin = 4 * SCALE
+    side_margin = 18 * SCALE
+    top_margin  = 20 * SCALE
 
-    # ---------- Top-right updated time (keep) ----------
+    # Weather widget (top-left) - 유지
+    wx, wy = side_margin, 12 * SCALE
+    widget_w, gap = 190 * SCALE, 10 * SCALE
+    col_w = (widget_w - gap) / 2
+
+    def center_text(x_left, y, t, font, fill=TEXT):
+        tw = draw2.textlength(t, font=font)
+        draw2.text((x_left + (col_w - tw) / 2, y), t, fill=fill, font=font)
+
+    center_text(wx, wy, "TODAY", font_label, TEXT)
+    center_text(wx + col_w + gap, wy, "TMRO", font_label, TEXT)
+
+    ensure_icons()
+    lat = float(os.getenv("OPENWEATHER_LAT", "37.5665"))
+    lon = float(os.getenv("OPENWEATHER_LON", "126.9780"))
+
+    try:
+        k_today, k_tmro, (tmin0, tmax0), (tmin1, tmax1) = get_today_tmro_kind_and_temps(lat, lon)
+    except Exception:
+        k_today, k_tmro, (tmin0, tmax0), (tmin1, tmax1) = "", "", (None, None), (None, None)
+
+    icon_size = 44 * SCALE
+    icon_y = wy + 16 * SCALE
+
+    def paste_icon(kind, x_left):
+        icon = load_icon(kind)
+        if not icon:
+            return
+        icon = icon.resize((icon_size, icon_size))
+        x = int(x_left + (col_w - icon_size) / 2)
+        img2.paste(icon, (x, int(icon_y)), icon)
+
+    paste_icon(k_today, wx)
+    paste_icon(k_tmro, wx + col_w + gap)
+
+    def fmt_minmax(tmin, tmax):
+        if tmin is None or tmax is None:
+            return ""
+        return f"{int(round(tmin))}°/{int(round(tmax))}°"
+
+    temp_y = icon_y + icon_size + (4 * SCALE)
+    center_text(wx, temp_y, fmt_minmax(tmin0, tmax0), font_temp, TEXT)
+    center_text(wx + col_w + gap, temp_y, fmt_minmax(tmin1, tmax1), font_temp, TEXT)
+
+    # Update time (top-right)
     updated = now.strftime("%m-%d %H:%M")
     uw = draw2.textlength(updated, font=font_label)
-    draw2.text((W2 - side_margin - uw, 6 * SCALE), updated, fill=TEXT, font=font_label)
+    draw2.text((W2 - side_margin - uw, 12 * SCALE), updated, fill=TEXT, font=font_label)
 
-    # ---------- Big Month centered ----------
+    # Month (big number centered)
     mstr = str(month)
     mw = draw2.textlength(mstr, font=font_month)
-    month_y = top_margin
-    draw2.text(((W2 - mw) / 2, month_y), mstr, fill=TEXT, font=font_month)
+    draw2.text(((W2 - mw) / 2, top_margin), mstr, fill=TEXT, font=font_month)
 
-    month_bottom = month_y + font_month.size
-
-    # ---------- DOW + GRID positioning ----------
-    month_to_dow_gap = 40 * SCALE  # 월 숫자와 요일 사이 간격
+    # Month bottom & spacing to DOW
+    month_bottom = top_margin + font_month.size
+    month_to_dow_gap = 52 * SCALE
     dow_y = month_bottom + month_to_dow_gap
 
-    # ---------- Bottom 5-day forecast area ----------
-    # 화면 아래에 5일 예보를 깔기 위해 고정 높이 할당
-    forecast_h = 150 * SCALE  # (최종 75px) -> 더 크고 싶으면 170~190으로 올려도 됨
-    forecast_top = H2 - bottom_margin - forecast_h
-    forecast_bottom = H2 - bottom_margin
-
-    # ---------- Calendar grid occupies everything between grid_top and forecast_top ----------
+    # Grid bounds
     grid_left = side_margin
     grid_right = W2 - side_margin
     grid_w = grid_right - grid_left
 
-    grid_top = dow_y + (40 * SCALE)
-    grid_bottom = forecast_top - (10 * SCALE)  # forecast와 간격
+    grid_top = dow_y + (38 * SCALE)
+    grid_bottom = H2 - (12 * SCALE)
 
     cols, rows = 7, 6
     cell_w = grid_w / cols
@@ -270,20 +282,29 @@ def main():
     cal = calendar.Calendar(firstweekday=6)
     days = list(cal.itermonthdates(year, month))[:42]
 
+    # =========================
+    # 핵심 수정: 날짜/일정 겹침 방지
+    #  - 이벤트는 이번달 날짜(in_month)에만 표시(기본)
+    #  - 이벤트 시작 y를 날짜 영역 아래로 강제(safe zone)
+    # =========================
     for i, day in enumerate(days):
         r, c = divmod(i, cols)
         x0 = grid_left + c * cell_w
         y0 = grid_top + r * cell_h
 
+        in_month = (day.month == month)
+
         # Sunday red
         is_sunday = (c == 0)
         date_color = RED if is_sunday else TEXT
 
-        # Date position: 위쪽, 일정과 간격 확보
+        # Date number (top zone)
         s = str(day.day)
         sw = draw2.textlength(s, font=font_date)
         sx = x0 + (cell_w - sw) / 2
-        sy = y0 + int(cell_h * 0.12)
+
+        # 날짜를 더 위로
+        sy = y0 + int(cell_h * 0.10)
         draw2.text((sx, sy), s, fill=date_color, font=font_date)
 
         # Today underline
@@ -295,14 +316,19 @@ def main():
                 width=max(1, int(2 * SCALE))
             )
 
-        # Events
+        # Events (bottom zone)
         evs = events_by_date.get(day, [])
-        if evs:
-            # 날짜 밑에서 조금 더 내려가서 시작
-            base_y = y0 + int(cell_h * 0.58)
+        if evs and in_month:
+            # 날짜 글자 아래 안전선(겹침 방지)
+            date_block_bottom = sy + int(70 * SCALE)  # 안전하게 조금 더 크게
+            safe_gap = int(10 * SCALE)
+
+            # 이벤트 시작 y: 셀 기준 + 안전선 중 더 큰 값
+            base_y_by_cell = y0 + int(cell_h * 0.66)  # 더 아래로 내려서 겹침 방지
+            base_y = max(base_y_by_cell, date_block_bottom + safe_gap)
+
             left_pad = x0 + (8 * SCALE)
             dot_r = int(3 * SCALE)
-
             text_x = left_pad + (12 * SCALE)
             max_text_w = (x0 + cell_w) - text_x - (6 * SCALE)
             line_gap = int(18 * SCALE)
@@ -311,87 +337,21 @@ def main():
                 t2 = truncate(draw2, t, font_event, max_text_w)
                 if not t2:
                     continue
+
                 ty = base_y + idx * line_gap
+
+                # 셀 아래로 넘어가면 그 줄은 그리지 않기
+                if ty > (y0 + cell_h - int(18 * SCALE)):
+                    break
 
                 cx = left_pad + dot_r
                 cy = ty + int(7 * SCALE)
                 draw2.ellipse([cx - dot_r, cy - dot_r, cx + dot_r, cy + dot_r], fill=RED)
                 draw2.text((text_x, ty), t2, fill=TEXT, font=font_event)
 
-    # =========================
-    # 5-day forecast (BOTTOM)
-    # =========================
-    ensure_icons()
-    lat = float(os.getenv("OPENWEATHER_LAT", "37.5665"))
-    lon = float(os.getenv("OPENWEATHER_LON", "126.9780"))
-
-    try:
-        fc = fetch_5day_forecast(lat, lon, tzname="Asia/Seoul", days=5)
-    except Exception:
-        fc = []
-
-    # forecast layout (5 columns across full width)
-    fx0 = grid_left
-    fx1 = grid_right
-    fw = fx1 - fx0
-    fcols = 5
-    fcell_w = fw / fcols
-
-    # optional: a subtle separator line above forecast
-    sep_y = forecast_top + (2 * SCALE)
-    draw2.line([(fx0, sep_y), (fx1, sep_y)], fill=(0, 0, 0), width=1)
-
-    # content region inside forecast
-    content_top = forecast_top + (10 * SCALE)
-    content_bottom = forecast_bottom - (6 * SCALE)
-    content_h = content_bottom - content_top
-
-    icon_size = int(40 * SCALE)
-    # positions within each forecast cell
-    label_y = content_top
-    icon_y = content_top + int(22 * SCALE)
-    temp_y = icon_y + icon_size + int(6 * SCALE)
-
-    def fmt_minmax(tmin, tmax):
-        if tmin is None or tmax is None:
-            return ""
-        return f"{int(round(tmin))}°/{int(round(tmax))}°"
-
-    # if forecast missing, still draw placeholders to keep layout stable
-    for idx in range(fcols):
-        x_left = fx0 + idx * fcell_w
-        x_center = x_left + fcell_w / 2
-
-        if idx < len(fc):
-            d = fc[idx]["date"]
-            kind = fc[idx]["kind"]
-            tmin = fc[idx]["tmin"]
-            tmax = fc[idx]["tmax"]
-
-            # label: "1/16" + 요일(한글 원하면 바꿔줄게)
-            label = f"{d.month}/{d.day}"
-            # draw label
-            tw = draw2.textlength(label, font=font_wday)
-            draw2.text((x_center - tw / 2, label_y), label, fill=TEXT, font=font_wday)
-
-            # icon
-            icon = load_icon(kind)
-            if icon:
-                icon = icon.resize((icon_size, icon_size))
-                img2.paste(icon, (int(x_center - icon_size / 2), int(icon_y)), icon)
-
-            # temps
-            tstr = fmt_minmax(tmin, tmax)
-            tw2 = draw2.textlength(tstr, font=font_temp)
-            draw2.text((x_center - tw2 / 2, temp_y), tstr, fill=TEXT, font=font_temp)
-        else:
-            # placeholder (empty)
-            pass
-
     # Downscale (anti-aliasing)
     img = img2.resize((W, H), resample=Image.Resampling.LANCZOS)
 
-    # Save (DO NOT change these paths)
     os.makedirs("docs", exist_ok=True)
     img.save("docs/latest.png")
     img.save("docs/latest.bmp")
