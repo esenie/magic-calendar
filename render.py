@@ -56,13 +56,6 @@ def load_icon(kind: str):
     return Image.open(p).convert("RGBA")
 
 def get_5day_forecast(lat: float, lon: float, tzname="Asia/Seoul"):
-    """
-    Returns a list of up to 5 dicts:
-    [
-      { 'date': date_obj, 'kind': 'sun', 'min': 10, 'max': 20 },
-      ...
-    ]
-    """
     api_key = os.getenv("OPENWEATHER_API_KEY", "").strip()
     if not api_key:
         return []
@@ -80,14 +73,12 @@ def get_5day_forecast(lat: float, lon: float, tzname="Asia/Seoul"):
     tz = pytz.timezone(tzname)
     now_date = datetime.now(tz).date()
     
-    # Organize by date
-    daily_data = {} # date -> { 'temps': [], 'codes': [] }
+    daily_data = {} 
 
     for item in data.get("list", []):
         dt = datetime.fromtimestamp(item["dt"], tz)
         d = dt.date()
         
-        # Skip past (though usually API gives future)
         if d < now_date:
             continue
             
@@ -102,7 +93,6 @@ def get_5day_forecast(lat: float, lon: float, tzname="Asia/Seoul"):
         if item.get("weather"):
             daily_data[d]['codes'].append(int(item["weather"][0]["id"]))
 
-    # Convert to result list (take first 5 days found)
     results = []
     sorted_dates = sorted(daily_data.keys())[:5]
 
@@ -116,11 +106,6 @@ def get_5day_forecast(lat: float, lon: float, tzname="Asia/Seoul"):
         tmin = min(temps)
         tmax = max(temps)
         
-        # For icon: simple logic, pick most frequent or just the first valid one
-        # Here we prefer rain/snow icons if they exist in the day to warn the user
-        # Priorities: Snow(6xx) > Rain(5xx,3xx) > Thunder(2xx) > Fog > Cloud > Sun
-        # But for simplicity, let's just pick the code that appears most or the "worst" one.
-        # Let's pick the one that occurs in the middle of the list (midday) usually represents the day well.
         if codes:
             mid_idx = len(codes) // 2
             rep_code = codes[mid_idx]
@@ -212,33 +197,31 @@ def main():
     # -------------------------
     # Fonts
     # -------------------------
-    # Sizes tuned for 2x scale
-    font_month = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 60 * SCALE)
+    # 1. 월(Month) 폰트 크기 대폭 확대 (180 * SCALE)
+    font_month = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 180 * SCALE)
     font_update = ImageFont.truetype("assets/Inter_28pt-ExtraLight.ttf", 12 * SCALE)
     
     font_dow   = ImageFont.truetype("assets/NanumGothicBold.ttf", 20 * SCALE)
     font_date  = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 40 * SCALE)
     font_event = ImageFont.truetype("assets/NanumSquareR.ttf", 15 * SCALE)
     
-    # Weather fonts
     font_wx_day = ImageFont.truetype("assets/NanumGothicBold.ttf", 16 * SCALE)
     font_wx_temp = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 16 * SCALE)
 
     # -------------------------
     # Layout Config
     # -------------------------
-    # Margins (Minimalist)
     side_margin = 2 * SCALE  
     top_margin = 2 * SCALE
     bottom_margin = 2 * SCALE
 
-    # Header Area (Month + Update Time)
-    header_h = 80 * SCALE
+    # Header Area (Month가 커졌으므로 높이 확보)
+    header_h = 160 * SCALE 
     
-    # Footer Area (Weather) - Bottom 15% roughly
+    # Footer Area (Weather)
     footer_h = 160 * SCALE 
     
-    # Grid Area (Calendar)
+    # Grid Area
     grid_top = top_margin + header_h
     grid_bottom = H2 - footer_h - bottom_margin
     grid_h = grid_bottom - grid_top
@@ -250,29 +233,25 @@ def main():
     # -------------------------
     # Draw Header
     # -------------------------
-    # 1. Month (Top Left)
+    # 1. Month (Top Left) - Y 위치 조정
     mstr = str(month)
-    draw2.text((grid_left + 10 * SCALE, top_margin), mstr, fill=TEXT, font=font_month)
+    # 폰트의 ascent 등을 고려하여 배치 (살짝 위로 올라가 보일 수 있으므로 y좌표 조정)
+    draw2.text((grid_left + 10 * SCALE, top_margin - (20 * SCALE)), mstr, fill=TEXT, font=font_month)
     
     # 2. Update Time (Top Right)
     updated = now.strftime("%m-%d %H:%M")
     uw = draw2.textlength(updated, font=font_update)
+    # 월 숫자가 커졌으니 업데이트 시간 위치도 그에 맞춰 상단 배치
     draw2.text((grid_right - uw - 10 * SCALE, top_margin + 20 * SCALE), updated, fill=TEXT, font=font_update)
-
-    # 3. Year (Optional, small next to month or just skip to save space)
-    # We skip year to keep it clean, as month is big.
 
     # -------------------------
     # Draw Calendar Grid
     # -------------------------
-    cols, rows = 7, 6  # 6 rows to accommodate all months safely
+    cols, rows = 7, 6 
     cell_w = grid_w / cols
-    cell_h = grid_h / rows
     
-    # Draw DOW Headers (Inside the top of grid area, or just above first row)
-    # Let's put DOW at the very top of grid_top
+    # Draw DOW Headers (요일)
     dow_h = 30 * SCALE
-    
     for c, dch in enumerate(DOW):
         x = grid_left + c * cell_w + cell_w / 2
         y = grid_top
@@ -286,7 +265,6 @@ def main():
     
     events_by_date = fetch_events_by_date(max_per_day=2)
 
-    # Shift rows down by dow_h to make room for M/T/W...
     row_start_y = grid_top + dow_h
     actual_cell_h = (grid_bottom - row_start_y) / rows
 
@@ -298,23 +276,20 @@ def main():
         # Date number
         s = str(day.day)
         is_sunday = (c == 0)
-        
-        # Grayscale for other month dates
         is_this_month = (day.month == month)
+        
         if not is_this_month:
-            date_color = (150, 150, 150) # Grey
+            date_color = (150, 150, 150)
         else:
             date_color = RED if is_sunday else TEXT
 
         sw = draw2.textlength(s, font=font_date)
-        # Position date at top-center of cell
         sx = x0 + (cell_w - sw) / 2
         sy = y0 + (5 * SCALE)
         draw2.text((sx, sy), s, fill=date_color, font=font_date)
 
-        # Today indicator (Circle or Underline)
+        # Today underline
         if day == today:
-            # Underline
             line_y = sy + font_date.size + (2 * SCALE)
             draw2.line(
                 [(sx, line_y), (sx + sw, line_y)], 
@@ -324,31 +299,45 @@ def main():
         # Events
         evs = events_by_date.get(day, [])
         if evs:
-            # Start events below the date
             event_y_start = sy + font_date.size + (6 * SCALE)
             line_height = 20 * SCALE
             
             for k, txt in enumerate(evs[:2]):
                 ey = event_y_start + k * line_height
                 if ey + line_height > y0 + actual_cell_h: 
-                    break # Don't overflow cell
-                
-                # Small dot
-                dot_r = 3 * SCALE
-                dx = x0 + 6 * SCALE
-                dy_center = ey + 8 * SCALE
-                draw2.ellipse([dx-dot_r, dy_center-dot_r, dx+dot_r, dy_center+dot_r], fill=RED)
-                
-                # Text
-                t_x = dx + 8 * SCALE
-                max_tw = cell_w - (16 * SCALE)
+                    break 
+
+                # --- Center Alignment Logic ---
+                # 텍스트 길이 측정
+                max_tw = cell_w - (10 * SCALE) # 여유분
                 trunc_txt = truncate(draw2, txt, font_event, max_tw)
-                draw2.text((t_x, ey), trunc_txt, fill=TEXT, font=font_event)
+                
+                txt_w = draw2.textlength(trunc_txt, font=font_event)
+                dot_r = 3 * SCALE
+                dot_dia = dot_r * 2
+                gap = 6 * SCALE
+                
+                # (점 + 공백 + 글자)의 전체 너비
+                total_content_w = dot_dia + gap + txt_w
+                
+                # 전체를 셀 중앙에 배치하기 위한 시작점 X
+                content_start_x = x0 + (cell_w - total_content_w) / 2
+                
+                # Draw Dot
+                dot_cx = content_start_x + dot_r
+                dot_cy = ey + 8 * SCALE # text vertically centered roughly
+                draw2.ellipse(
+                    [dot_cx - dot_r, dot_cy - dot_r, dot_cx + dot_r, dot_cy + dot_r], 
+                    fill=RED
+                )
+                
+                # Draw Text
+                text_x = content_start_x + dot_dia + gap
+                draw2.text((text_x, ey), trunc_txt, fill=TEXT, font=font_event)
 
     # -------------------------
     # Draw Footer (5-Day Weather)
     # -------------------------
-    # Separator line
     draw2.line([(0, grid_bottom), (W2, grid_bottom)], fill=TEXT, width=int(2*SCALE))
 
     lat = float(os.getenv("OPENWEATHER_LAT", "37.5665"))
@@ -357,10 +346,8 @@ def main():
     
     forecasts = get_5day_forecast(lat, lon)
     
-    # 5 columns
     wx_col_w = W2 / 5
     wx_y_start = grid_bottom + (10 * SCALE)
-    
     icon_size = 50 * SCALE
 
     for i in range(5):
@@ -372,12 +359,10 @@ def main():
             kind = f['kind']
             tmin, tmax = f['min'], f['max']
             
-            # 1. Day Name (Mon, Tue...)
-            day_str = d_obj.strftime("%a") # Mon, Tue
+            day_str = d_obj.strftime("%a")
             dw = draw2.textlength(day_str, font=font_wx_day)
             draw2.text((cx - dw/2, wx_y_start), day_str, fill=TEXT, font=font_wx_day)
             
-            # 2. Icon
             icon = load_icon(kind)
             if icon:
                 icon = icon.resize((icon_size, icon_size))
@@ -385,7 +370,6 @@ def main():
                 iy = int(wx_y_start + 25 * SCALE)
                 img2.paste(icon, (ix, iy), icon)
             
-            # 3. Temp (Min/Max)
             t_str = f"{int(round(tmin))}°/{int(round(tmax))}°"
             tw = draw2.textlength(t_str, font=font_wx_temp)
             ty = wx_y_start + 85 * SCALE
