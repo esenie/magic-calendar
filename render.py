@@ -21,7 +21,7 @@ DOW = ["S", "M", "T", "W", "T", "F", "S"]
 ICON_DIR = "assets/weather"
 
 # -------------------------
-# Helpers (Forecast, ICS 등은 동일하게 유지)
+# Helpers
 # -------------------------
 def code_to_kind(wid: int) -> str:
     if 200 <= wid <= 232: return "thunder"
@@ -101,9 +101,9 @@ def main():
     img2 = Image.new("RGB", (W2, H2), "white")
     draw2 = ImageDraw.Draw(img2)
 
-    # Fonts (가독성을 위해 일정 폰트를 살짝 조정)
+    # Fonts
     font_month = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 230 * SCALE)
-    font_date  = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 40 * SCALE) # 날짜 살짝 축소
+    font_date  = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 42 * SCALE)
     font_dow   = ImageFont.truetype("assets/NanumGothicBold.ttf", 32 * SCALE)
     font_event = ImageFont.truetype("assets/NanumSquareR.ttf", 16 * SCALE)
     font_label = ImageFont.truetype("assets/Inter_28pt-ExtraLight.ttf", 14 * SCALE)
@@ -118,28 +118,29 @@ def main():
     uw = draw2.textlength(updated, font=font_label)
     draw2.text((W2 - SIDE_MARGIN - uw, TOP_MARGIN), updated, fill=TEXT, font=font_label)
 
-    # 2. Month (충분한 높이 확보)
+    # 2. Month
     mstr = str(month)
     mw = draw2.textlength(mstr, font=font_month)
     draw2.text(((W2 - mw) / 2, TOP_MARGIN - 10*SCALE), mstr, fill=TEXT, font=font_month)
 
     # 3. Grid Calculation
-    grid_top = TOP_MARGIN + (280 * SCALE) # '1' 숫자와 요일 간격 대폭 확대
-    grid_bottom = H2 - BOTTOM_WIDGET_H - (20 * SCALE)
+    grid_top = TOP_MARGIN + (260 * SCALE) 
+    grid_bottom = H2 - BOTTOM_WIDGET_H - (10 * SCALE)
     
     cell_w = (W2 - 2 * SIDE_MARGIN) / 7
-    total_grid_h = grid_bottom - grid_top
-    cell_h = total_grid_h / 7 
+    # 전체 그리드 높이를 7개 행(요일1+날짜6)으로 정확히 나눔
+    cell_h = (grid_bottom - grid_top) / 7
 
-    # Draw DOW
+    # Draw DOW (요일)
     for c, dch in enumerate(DOW):
         x = SIDE_MARGIN + c * cell_w + cell_w / 2
         color = RED if c == 0 else TEXT
         dw = draw2.textlength(dch, font=font_dow)
-        draw2.text((x - dw / 2, grid_top), dch, fill=color, font=font_dow)
+        draw2.text((x - dw / 2, grid_top + 10*SCALE), dch, fill=color, font=font_dow)
 
     # Draw Days
-    grid_actual_top = grid_top + (70 * SCALE) 
+    # 요일 행 다음부터 날짜 시작
+    grid_days_top = grid_top + cell_h
     cal_obj = calendar.Calendar(firstweekday=6)
     days = list(cal_obj.itermonthdates(year, month))[:42]
     events = fetch_events_by_date()
@@ -147,29 +148,28 @@ def main():
     for i, day in enumerate(days):
         r, c = divmod(i, 7)
         x0 = SIDE_MARGIN + c * cell_w
-        y0 = grid_actual_top + r * ((grid_bottom - grid_actual_top)/6)
+        y0 = grid_days_top + r * cell_h
         
-        # 겹침 방지의 핵심: 날짜를 셀의 상단에 고정
+        # Date Number (상단 배치)
         d_color = RED if c == 0 else TEXT
         if day.month != month: d_color = FADE 
         
         ds = str(day.day)
         dw = draw2.textlength(ds, font=font_date)
-        # y0 지점(셀의 시작점)에 바로 날짜 배치
-        draw2.text((x0 + (cell_w - dw)/2, y0), ds, fill=d_color, font=font_date)
+        draw2.text((x0 + (cell_w - dw)/2, y0 + 5*SCALE), ds, fill=d_color, font=font_date)
 
-        # Today Underline
+        # Today Underline (일정과 겹치지 않게 날짜 바로 밑에)
         if day == now.date():
             ux = x0 + cell_w * 0.3
-            draw2.line([(ux, y0 + 48*SCALE), (x0 + cell_w * 0.7, y0 + 48*SCALE)], fill=RED, width=3)
+            draw2.line([(ux, y0 + 46*SCALE), (x0 + cell_w * 0.7, y0 + 46*SCALE)], fill=RED, width=3)
 
-        # Events (날짜 숫자와 겹치지 않게 'y0 + 55*SCALE' 부터 시작)
+        # Events (날짜 아래 여유 공간에 순차 배치)
         day_evs = events.get(day, [])
         for idx, ev in enumerate(day_evs):
-            ev_y = y0 + (58 * SCALE) + (idx * 24 * SCALE)
-            txt = truncate(draw2, ev, font_event, cell_w - 15*SCALE)
+            # ev_y를 날짜와 겹치지 않는 충분한 지점(48*SCALE)부터 시작
+            ev_y = y0 + (52 * SCALE) + (idx * 24 * SCALE)
+            txt = truncate(draw2, ev, font_event, cell_w - 10*SCALE)
             tw = draw2.textlength(txt, font=font_event)
-            # 일정은 중앙 정렬
             draw2.text((x0 + (cell_w - tw)/2, ev_y), txt, fill=TEXT, font=font_event)
 
     # 4. Bottom 5-Day Forecast
