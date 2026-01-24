@@ -15,14 +15,14 @@ W, H = 680, 960
 # =========================
 # Supersampling (anti-aliasing)
 # =========================
-SCALE = 2  # 2x render -> downscale to reduce jaggies on e-ink
+SCALE = 2
 W2, H2 = W * SCALE, H * SCALE
 
 # =========================
 # Colors (E-Ink friendly)
 # =========================
 TEXT = (0, 0, 0)
-FADE = TEXT  # keep all text black (e-ink)
+FADE = TEXT
 RED  = (200, 0, 0)
 
 DOW = ["S", "M", "T", "W", "T", "F", "S"]
@@ -56,14 +56,6 @@ def load_icon(kind: str):
     return Image.open(p).convert("RGBA")
 
 def fetch_5day_forecast(lat: float, lon: float, tzname="Asia/Seoul", days=5):
-    """
-    OpenWeather 3-hour forecast -> group by local date
-    return list of dict:
-      [{"date": date, "kind": "sun", "tmin": 1.2, "tmax": 7.8}, ...] length=days
-    Rules:
-      - kind: pick entry closest to 12:00 local time (fallback first entry of that day)
-      - tmin/tmax: use main.temp_min / main.temp_max across the day
-    """
     api_key = os.getenv("OPENWEATHER_API_KEY", "").strip()
     if not api_key:
         return []
@@ -91,7 +83,6 @@ def fetch_5day_forecast(lat: float, lon: float, tzname="Asia/Seoul", days=5):
             break
         items = by_day[d]
 
-        # pick kind closest to 12:00 local
         target = datetime(d.year, d.month, d.day, 12, 0, 0, tzinfo=tz)
         best_item = None
         best_dist = None
@@ -108,14 +99,12 @@ def fetch_5day_forecast(lat: float, lon: float, tzname="Asia/Seoul", days=5):
             wid = int(best_item["weather"][0]["id"])
             kind = code_to_kind(wid)
 
-        # daily min/max from temp_min/temp_max (fallback temp)
         tmin = None
         tmax = None
         for _, item in items:
             main = item.get("main", {})
             lo = main.get("temp_min", main.get("temp"))
             hi = main.get("temp_max", main.get("temp"))
-
             if isinstance(lo, (int, float)):
                 tmin = lo if tmin is None else min(tmin, lo)
             if isinstance(hi, (int, float)):
@@ -161,7 +150,7 @@ def fetch_events_by_date(tzname="Asia/Seoul", max_per_day=2):
                 dtstart = tz.localize(dtstart)
             day = dtstart.astimezone(tz).date()
         else:
-            day = dtstart  # date
+            day = dtstart
 
         events.setdefault(day, []).append(summary)
 
@@ -192,62 +181,56 @@ def main():
     today = now.date()
     year, month = now.year, now.month
 
-    # Supersampled canvas
     img2 = Image.new("RGB", (W2, H2), "white")
     draw2 = ImageDraw.Draw(img2)
 
-    # -------------------------
     # Fonts (scaled)
-    # -------------------------
     font_month = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 235 * SCALE)
     font_date  = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 44 * SCALE)
     font_dow   = ImageFont.truetype("assets/NanumGothicBold.ttf", 32 * SCALE)
     font_event = ImageFont.truetype("assets/NanumSquareEB.ttf", 14 * SCALE)
 
     font_label = ImageFont.truetype("assets/Inter_28pt-ExtraLight.ttf", 12 * SCALE)
-    font_wday  = ImageFont.truetype("assets/NanumGothicBold.ttf", 14 * SCALE)  # forecast day label
+    font_wday  = ImageFont.truetype("assets/NanumGothicBold.ttf", 14 * SCALE)
     font_temp  = ImageFont.truetype("assets/Inter_28pt-ExtraLight.ttf", 12 * SCALE)
 
-    # -------------------------
     # Layout: minimize margins
-    # -------------------------
     side_margin = 6 * SCALE
     top_margin  = 4 * SCALE
     bottom_margin = 4 * SCALE
 
-    # ---------- Top-right updated time (keep) ----------
+    # Top-right updated time
     updated = now.strftime("%m-%d %H:%M")
     uw = draw2.textlength(updated, font=font_label)
     draw2.text((W2 - side_margin - uw, 6 * SCALE), updated, fill=TEXT, font=font_label)
 
-    # ---------- Big Month centered ----------
+    # Big Month centered
     mstr = str(month)
     mw = draw2.textlength(mstr, font=font_month)
     month_y = top_margin
     draw2.text(((W2 - mw) / 2, month_y), mstr, fill=TEXT, font=font_month)
-
     month_bottom = month_y + font_month.size
 
-    # ---------- DOW + GRID positioning ----------
-    month_to_dow_gap = 40 * SCALE  # 월 숫자와 요일 사이 간격
+    # DOW positioning
+    month_to_dow_gap = 40 * SCALE
     dow_y = month_bottom + month_to_dow_gap
 
-    # ---------- Bottom 5-day forecast area ----------
-    forecast_h = 150 * SCALE
+    # --------- Bottom 5-day forecast area (줄여서 달력에 공간 더 줌) ---------
+    forecast_h = 120 * SCALE          # (기존 150) -> 달력 세로 여유/행 간격 증가
     forecast_top = H2 - bottom_margin - forecast_h
     forecast_bottom = H2 - bottom_margin
 
-    # ---------- Calendar grid occupies everything between grid_top and forecast_top ----------
+    # Calendar grid between grid_top and forecast_top
     grid_left = side_margin
     grid_right = W2 - side_margin
     grid_w = grid_right - grid_left
 
     grid_top = dow_y + (40 * SCALE)
-    grid_bottom = forecast_top - (10 * SCALE)
+    grid_bottom = forecast_top - (2 * SCALE)  # forecast 바로 위까지 붙임(간격 최소)
 
     cols, rows = 7, 6
     cell_w = grid_w / cols
-    cell_h = (grid_bottom - grid_top) / rows
+    cell_h = (grid_bottom - grid_top) / rows  # cell_h 증가 => 행 간격 증가 효과
 
     # Draw DOW
     for c, dch in enumerate(DOW):
@@ -266,57 +249,48 @@ def main():
     cal = calendar.Calendar(firstweekday=6)
     days = list(cal.itermonthdates(year, month))[:42]
 
+    # constants for event layout
+    gap_after_date = int(8 * SCALE)     # 날짜-일정 간격 (더 멀게)
+    underline_pad = int(4 * SCALE)
+    event_line_gap = int(17 * SCALE)
+    bottom_pad = int(6 * SCALE)
+
     for i, day in enumerate(days):
         r, c = divmod(i, cols)
         x0 = grid_left + c * cell_w
         y0 = grid_top + r * cell_h
 
-        # Sunday red
         is_sunday = (c == 0)
         date_color = RED if is_sunday else TEXT
 
-        # Date position: upper area
         s = str(day.day)
         sw = draw2.textlength(s, font=font_date)
         sx = x0 + (cell_w - sw) / 2
-        date_y = y0 + int(cell_h * 0.12)
+        date_y = y0 + int(cell_h * 0.10)  # 날짜를 살짝 위로
         draw2.text((sx, date_y), s, fill=date_color, font=font_date)
 
-        # Today underline
+        # actual date glyph height
+        bbox = draw2.textbbox((0, 0), s, font=font_date)
+        date_h = bbox[3] - bbox[1]
+
+        # Today underline (글자 바로 아래)
         if day == today:
-            # underline just under the glyph
-            bbox = draw2.textbbox((0, 0), s, font=font_date)
-            date_h = bbox[3] - bbox[1]
-            uy = date_y + date_h + int(4 * SCALE)
+            uy = date_y + date_h + underline_pad
             draw2.line(
                 [(x0 + cell_w * 0.30, uy), (x0 + cell_w * 0.70, uy)],
                 fill=RED,
                 width=max(1, int(2 * SCALE))
             )
 
-        # -----------------------------
-        # Events (NO overlap, NO vanish)
-        # -----------------------------
+        # Events (겹침 방지: 날짜 높이 기반으로 아래에 배치)
         evs = events_by_date.get(day, [])
         if evs:
-            # 1) compute actual date glyph height
-            bbox = draw2.textbbox((0, 0), s, font=font_date)
-            date_h = bbox[3] - bbox[1]
-
-            underline_pad = int(6 * SCALE)
-            gap_after_date = int(6 * SCALE)   # 날짜-일정 간격 (8~10으로 키우면 더 떨어짐)
             event_y_start = date_y + date_h + underline_pad + gap_after_date
-
-            # 2) how many lines fit until cell bottom?
             cell_bottom = y0 + cell_h
-            event_line_gap = int(16 * SCALE)  # 줄간격 (조정 가능)
-            bottom_pad = int(6 * SCALE)
-
             available_h = cell_bottom - event_y_start - bottom_pad
             max_lines_fit = int(available_h // event_line_gap)
-            max_lines = min(2, max(1, max_lines_fit))  # 최소 1줄은 보이게
+            max_lines = min(2, max(1, max_lines_fit))
 
-            # 3) draw bullet + text
             left_pad = x0 + int(8 * SCALE)
             dot_r = int(3 * SCALE)
             text_x = left_pad + int(12 * SCALE)
@@ -327,7 +301,6 @@ def main():
                 if not t2:
                     continue
                 ty = event_y_start + idx * event_line_gap
-
                 cx = left_pad + dot_r
                 cy = ty + int(7 * SCALE)
                 draw2.ellipse([cx - dot_r, cy - dot_r, cx + dot_r, cy + dot_r], fill=RED)
@@ -351,16 +324,13 @@ def main():
     fcols = 5
     fcell_w = fw / fcols
 
-    # separator line above forecast
     sep_y = forecast_top + (2 * SCALE)
     draw2.line([(fx0, sep_y), (fx1, sep_y)], fill=(0, 0, 0), width=1)
 
-    content_top = forecast_top + (10 * SCALE)
-    content_bottom = forecast_bottom - (6 * SCALE)
-
+    content_top = forecast_top + (8 * SCALE)
     icon_size = int(40 * SCALE)
     label_y = content_top
-    icon_y = content_top + int(22 * SCALE)
+    icon_y = content_top + int(20 * SCALE)
     temp_y = icon_y + icon_size + int(6 * SCALE)
 
     def fmt_minmax(tmin, tmax):
