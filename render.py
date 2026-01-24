@@ -71,18 +71,31 @@ def fetch_events_by_date(tzname="Asia/Seoul", max_per_day=2):
         events = {}
         for comp in cal.walk():
             if comp.name != "VEVENT": continue
-            dtstart = comp.get("dtstart").dt
+            
+            # 안전장치: dtstart가 없는 비정상 데이터 스킵
+            d_prop = comp.get("dtstart")
+            if not d_prop: continue
+            dtstart = d_prop.dt
+
             summary = str(comp.get("summary", "")).strip()
+            
             if isinstance(dtstart, datetime):
                 if dtstart.tzinfo is None: dtstart = tz.localize(dtstart)
                 day = dtstart.astimezone(tz).date()
-            else: day = dtstart
+            else: 
+                # date 객체인 경우 (종일 일정)
+                day = dtstart
+                
             events.setdefault(day, []).append(summary)
+            
         for d in events: events[d] = events[d][:max_per_day]
         return events
-    except: return {}
+    except Exception as e:
+        print(f"ICS Error: {e}") # 로그 확인용
+        return {}
 
 def truncate(draw, text, font, max_w):
+    if not text: return ""
     text = text.replace("\n", " ").strip()
     if draw.textlength(text, font=font) <= max_w: return text
     while text and draw.textlength(text + "…", font=font) > max_w: text = text[:-1]
@@ -128,10 +141,10 @@ def main():
     grid_bottom = H2 - BOTTOM_WIDGET_H - (10 * SCALE)
     
     cell_w = (W2 - 2 * SIDE_MARGIN) / 7
-    # 전체 그리드 높이를 7개 행(요일1+날짜6)으로 정확히 나눔
+    # 7줄 (요일 헤더 1줄 + 날짜 6줄)
     cell_h = (grid_bottom - grid_top) / 7
 
-    # Draw DOW (요일)
+    # Draw DOW
     for c, dch in enumerate(DOW):
         x = SIDE_MARGIN + c * cell_w + cell_w / 2
         color = RED if c == 0 else TEXT
@@ -139,7 +152,6 @@ def main():
         draw2.text((x - dw / 2, grid_top + 10*SCALE), dch, fill=color, font=font_dow)
 
     # Draw Days
-    # 요일 행 다음부터 날짜 시작
     grid_days_top = grid_top + cell_h
     cal_obj = calendar.Calendar(firstweekday=6)
     days = list(cal_obj.itermonthdates(year, month))[:42]
@@ -158,18 +170,21 @@ def main():
         dw = draw2.textlength(ds, font=font_date)
         draw2.text((x0 + (cell_w - dw)/2, y0 + 5*SCALE), ds, fill=d_color, font=font_date)
 
-        # Today Underline (일정과 겹치지 않게 날짜 바로 밑에)
+        # Today Underline
         if day == now.date():
             ux = x0 + cell_w * 0.3
-            draw2.line([(ux, y0 + 46*SCALE), (x0 + cell_w * 0.7, y0 + 46*SCALE)], fill=RED, width=3)
+            draw2.line([(ux, y0 + 48*SCALE), (x0 + cell_w * 0.7, y0 + 48*SCALE)], fill=RED, width=3)
 
-        # Events (날짜 아래 여유 공간에 순차 배치)
+        # Events Drawing (날짜 바로 아래쪽으로 위치 당김)
         day_evs = events.get(day, [])
         for idx, ev in enumerate(day_evs):
-            # ev_y를 날짜와 겹치지 않는 충분한 지점(48*SCALE)부터 시작
-            ev_y = y0 + (52 * SCALE) + (idx * 24 * SCALE)
-            txt = truncate(draw2, ev, font_event, cell_w - 10*SCALE)
+            # idx=0일 때 y0+58, idx=1일 때 y0+82 (충분히 안전한 위치)
+            ev_y = y0 + (58 * SCALE) + (idx * 24 * SCALE)
+            
+            txt = truncate(draw2, ev, font_event, cell_w - 6*SCALE)
             tw = draw2.textlength(txt, font=font_event)
+            
+            # 텍스트 중앙 정렬해서 그리기
             draw2.text((x0 + (cell_w - tw)/2, ev_y), txt, fill=TEXT, font=font_event)
 
     # 4. Bottom 5-Day Forecast
