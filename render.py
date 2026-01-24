@@ -216,12 +216,12 @@ def main():
     # Tuning knobs (NEW)
     # =========================
     GRID_TO_FORECAST_GAP = 4 * SCALE   # (문제3) 마지막 주 ↔ 5일예보 사이 여백
-    FORECAST_H = 130 * SCALE           # 5일예보 높이 (135~160 튜닝 추천)
+    FORECAST_H = 120 * SCALE           # 5일예보 높이 (135~160 튜닝 추천)
 
     DATE_TOP_PAD_FRAC = 0.10           # 날짜 y 시작(셀 높이 대비 비율)
-    EVENT_TOP_PAD = 10 * SCALE          # 날짜 bbox 아래로 이벤트 시작 여백 (문제1)
-    EVENT_BOTTOM_PAD = 10 * SCALE      # 셀 바닥 여백
-    EVENT_LINE_GAP = 22 * SCALE        # 이벤트 줄 간격
+    EVENT_TOP_PAD = 6 * SCALE          # 날짜 bbox 아래로 이벤트 시작 여백 (문제1)
+    EVENT_BOTTOM_PAD = 6 * SCALE      # 셀 바닥 여백
+    EVENT_LINE_GAP = 16 * SCALE        # 이벤트 줄 간격
 
     UNDERLINE_GAP = 1 * SCALE          # (문제2) 글자 bbox 밑으로 밑줄 간격
     UNDERLINE_INSET_FRAC = 0.06        # 밑줄 좌/우 inset (bbox width 대비)
@@ -241,7 +241,7 @@ def main():
     month_bottom = month_y + font_month.size
 
     # ---------- DOW + GRID positioning ----------
-    month_to_dow_gap = 30 * SCALE
+    month_to_dow_gap = 28 * SCALE
     dow_y = month_bottom + month_to_dow_gap
 
     # ---------- Bottom 5-day forecast area ----------
@@ -254,7 +254,7 @@ def main():
     grid_right = W2 - side_margin
     grid_w = grid_right - grid_left
 
-    grid_top = dow_y + (28 * SCALE)
+    grid_top = dow_y + (24 * SCALE)
     grid_bottom = forecast_top - GRID_TO_FORECAST_GAP  # (NEW) gap control
 
     cols, rows = 7, 6
@@ -311,46 +311,38 @@ def main():
             draw2.line([(ux1, uy), (ux2, uy)], fill=RED, width=UNDERLINE_W)
 
         # =========================
-        # Events (bbox 기반: 날짜와 절대 안 겹치게 + 셀 남은공간에 맞춰 자동 줄수 조절)
+        # =========================
+        # Events (2개 고정 표시: 공간은 레이아웃으로 확보)
         # =========================
         evs = events_by_date.get(day, [])
         if evs:
-            # 날짜 bbox 아래에서 시작 (겹침 방지)
             base_y = by2 + EVENT_TOP_PAD
-
-            # 최소 시작선 확보(특이 케이스 방지)
-            min_base = y0 + int(cell_h * 0.45)
-            if base_y < min_base:
-                base_y = min_base
-
+        
             left_pad = x0 + EVENT_LEFT_PAD
             dot_r = int(3 * SCALE)
             text_x = left_pad + EVENT_TEXT_GAP
             max_text_w = (x0 + cell_w) - text_x - (6 * SCALE)
-
-            # 셀 하단을 넘지 않도록 표시 가능한 줄 수 계산
-            cell_bottom_limit = y0 + cell_h - EVENT_BOTTOM_PAD
-            available_h = cell_bottom_limit - base_y
-            if available_h > 0:
-                max_lines = int(available_h // EVENT_LINE_GAP) + 1
-                max_lines = max(0, min(2, max_lines))  # 최대 2줄 유지
-            else:
-                max_lines = 0
-
-            for idx, t in enumerate(evs[:max_lines]):
+        
+            # 폰트 한 줄 높이
+            _, ty1, _, ty2 = draw2.textbbox((0, 0), "가A", font=font_event)
+            line_h = (ty2 - ty1)
+        
+            for idx, t in enumerate(evs[:2]):   # 무조건 2개까지 시도
                 t2 = truncate(draw2, t, font_event, max_text_w)
                 if not t2:
                     continue
-                ty = base_y + idx * EVENT_LINE_GAP
-
-                # red dot
+        
+                ty = base_y + idx * (line_h + EVENT_LINE_GAP)
+        
+                # (안전장치) 셀 바닥을 넘으면 그 줄은 그리지 않음
+                if ty + line_h > (y0 + cell_h - EVENT_BOTTOM_PAD):
+                    break
+        
                 cx = left_pad + dot_r
-                cy = ty + int(7 * SCALE)
+                cy = ty + int(line_h * 0.55)
                 draw2.ellipse([cx - dot_r, cy - dot_r, cx + dot_r, cy + dot_r], fill=RED)
-
-                # text
                 draw2.text((text_x, ty), t2, fill=TEXT, font=font_event)
-
+        
     # =========================
     # 5-day forecast (BOTTOM)
     # =========================
