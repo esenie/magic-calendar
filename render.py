@@ -56,19 +56,23 @@ def load_icon(kind: str):
     return Image.open(p).convert("RGBA")
 
 def fetch_5day_forecast(lat: float, lon: float, tzname="Asia/Seoul", days=5):
+    """
+    OpenWeather 3-hour forecast -> group by local date
+    return list of dict:
+      [{"date": date, "kind": "sun", "tmin": 1.2, "tmax": 7.8}, ...] length=days
+    Rules:
+      - kind: pick entry closest to 12:00 local time (fallback first entry of that day)
+      - tmin/tmax: use main.temp_min / main.temp_max across the day
+    """
     api_key = os.getenv("OPENWEATHER_API_KEY", "").strip()
     if not api_key:
         return []
 
     url = "https://api.openweathermap.org/data/2.5/forecast"
     params = {"lat": lat, "lon": lon, "appid": api_key, "units": "metric"}
-    try:
-        r = requests.get(url, params=params, timeout=20)
-        r.raise_for_status()
-        data = r.json()
-    except Exception as e:
-        print(f"Weather Fetch Error: {e}")
-        return []
+    r = requests.get(url, params=params, timeout=20)
+    r.raise_for_status()
+    data = r.json()
 
     tz = pytz.timezone(tzname)
     today = datetime.now(tz).date()
@@ -87,6 +91,7 @@ def fetch_5day_forecast(lat: float, lon: float, tzname="Asia/Seoul", days=5):
             break
         items = by_day[d]
 
+        # closest to 12:00
         target = datetime(d.year, d.month, d.day, 12, 0, 0, tzinfo=tz)
         best_item = None
         best_dist = None
@@ -120,7 +125,7 @@ def fetch_5day_forecast(lat: float, lon: float, tzname="Asia/Seoul", days=5):
 # =========================
 # ICS helpers
 # =========================
-def fetch_events_by_date(tzname="Asia/Seoul", max_per_day=3): # max_per_day 살짝 늘림
+def fetch_events_by_date(tzname="Asia/Seoul", max_per_day=2):
     url = os.getenv("ICAL_URL", "").strip()
     if not url:
         return {}
@@ -128,17 +133,13 @@ def fetch_events_by_date(tzname="Asia/Seoul", max_per_day=3): # max_per_day 살�
     if url.startswith("webcal://"):
         url = "https://" + url[len("webcal://"):]
 
-    try:
-        r = requests.get(url, timeout=25)
-        r.raise_for_status()
-        cal = Calendar.from_ical(r.text)
-    except Exception as e:
-        print(f"ICAL Fetch Error: {e}")
-        return {}
+    r = requests.get(url, timeout=25)
+    r.raise_for_status()
 
+    cal = Calendar.from_ical(r.text)
     tz = pytz.timezone(tzname)
+
     events = {}
-    
     for comp in cal.walk():
         if comp.name != "VEVENT":
             continue
@@ -157,12 +158,11 @@ def fetch_events_by_date(tzname="Asia/Seoul", max_per_day=3): # max_per_day 살�
                 dtstart = tz.localize(dtstart)
             day = dtstart.astimezone(tz).date()
         else:
-            day = dtstart
+            day = dtstart  # date
 
         events.setdefault(day, []).append(summary)
 
     for d in list(events.keys()):
-        # 단순 리스트 슬라이싱
         events[d] = events[d][:max_per_day]
 
     return events
@@ -174,6 +174,8 @@ def truncate(draw, text, font, max_w):
     if draw.textlength(text, font=font) <= max_w:
         return text
     ell = "…"
+    if draw.textlength(ell, font=font) >= max_w:
+        return ell
     while text and draw.textlength(text + ell, font=font) > max_w:
         text = text[:-1]
     return text + ell
@@ -192,51 +194,68 @@ def main():
     draw2 = ImageDraw.Draw(img2)
 
     # -------------------------
-    # Fonts
+    # Fonts (scaled)
     # -------------------------
     font_month = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 235 * SCALE)
     font_date  = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 44 * SCALE)
     font_dow   = ImageFont.truetype("assets/NanumGothicBold.ttf", 32 * SCALE)
-    font_event = ImageFont.truetype("assets/NanumSquareEB.ttf", 15 * SCALE) # 가독성 위해 1pt 키움
+    font_event = ImageFont.truetype("assets/NanumSquareEB.ttf", 14 * SCALE)
 
     font_label = ImageFont.truetype("assets/Inter_28pt-ExtraLight.ttf", 12 * SCALE)
-    font_wday  = ImageFont.truetype("assets/NanumGothicBold.ttf", 14 * SCALE)
+    font_wday  = ImageFont.truetype("assets/NanumGothicBold.ttf", 14 * SCALE)  # forecast day label
     font_temp  = ImageFont.truetype("assets/Inter_28pt-ExtraLight.ttf", 12 * SCALE)
 
     # -------------------------
-    # Layout
+    # Layout: minimize margins
     # -------------------------
     side_margin = 6 * SCALE
     top_margin  = 4 * SCALE
     bottom_margin = 4 * SCALE
 
-    # Top-right updated time
+    # =========================
+    # Tuning knobs (NEW)
+    # =========================
+    GRID_TO_FORECAST_GAP = 26 * SCALE   # (문제3) 마지막 주 ↔ 5일예보 사이 여백
+    FORECAST_H = 145 * SCALE           # 5일예보 높이 (135~160 튜닝 추천)
+
+    DATE_TOP_PAD_FRAC = 0.10           # 날짜 y 시작(셀 높이 대비 비율)
+    EVENT_TOP_PAD = 8 * SCALE          # 날짜 bbox 아래로 이벤트 시작 여백 (문제1)
+    EVENT_BOTTOM_PAD = 10 * SCALE      # 셀 바닥 여백
+    EVENT_LINE_GAP = 17 * SCALE        # 이벤트 줄 간격
+
+    UNDERLINE_GAP = 1 * SCALE          # (문제2) 글자 bbox 밑으로 밑줄 간격
+    UNDERLINE_INSET_FRAC = 0.06        # 밑줄 좌/우 inset (bbox width 대비)
+    UNDERLINE_W = max(1, int(2 * SCALE))
+
+    # ---------- Top-right updated time ----------
     updated = now.strftime("%m-%d %H:%M")
     uw = draw2.textlength(updated, font=font_label)
     draw2.text((W2 - side_margin - uw, 6 * SCALE), updated, fill=TEXT, font=font_label)
 
-    # Month
+    # ---------- Big Month centered ----------
     mstr = str(month)
     mw = draw2.textlength(mstr, font=font_month)
     month_y = top_margin
     draw2.text(((W2 - mw) / 2, month_y), mstr, fill=TEXT, font=font_month)
+
     month_bottom = month_y + font_month.size
 
-    # DOW + GRID
-    month_to_dow_gap = 30 * SCALE
+    # ---------- DOW + GRID positioning ----------
+    month_to_dow_gap = 40 * SCALE
     dow_y = month_bottom + month_to_dow_gap
 
-    # [수정 3] 하단 예보 영역과의 간격 조정 (Last Week Spacing)
-    # 기존 10 * SCALE -> 50 * SCALE로 변경하여 캘린더와 예보 사이 공백 확보
-    forecast_h = 150 * SCALE
+    # ---------- Bottom 5-day forecast area ----------
+    forecast_h = FORECAST_H
     forecast_top = H2 - bottom_margin - forecast_h
-    
+    forecast_bottom = H2 - bottom_margin
+
+    # ---------- Calendar grid occupies between grid_top and forecast_top ----------
     grid_left = side_margin
     grid_right = W2 - side_margin
     grid_w = grid_right - grid_left
 
     grid_top = dow_y + (40 * SCALE)
-    grid_bottom = forecast_top - (50 * SCALE) # <-- 간격 넓힘
+    grid_bottom = forecast_top - GRID_TO_FORECAST_GAP  # (NEW) gap control
 
     cols, rows = 7, 6
     cell_w = grid_w / cols
@@ -259,81 +278,81 @@ def main():
     cal = calendar.Calendar(firstweekday=6)
     days = list(cal.itermonthdates(year, month))[:42]
 
-    # Event alignment knobs
-    EVENT_LEFT_PAD = 14 * SCALE
-    EVENT_TEXT_GAP = 14 * SCALE
+    # --------- Event alignment knobs (기존 요청 반영) ----------
+    EVENT_LEFT_PAD = 14 * SCALE       # dot 시작 x를 더 오른쪽으로
+    EVENT_TEXT_GAP = 14 * SCALE       # dot 이후 텍스트 시작 오프셋
 
     for i, day in enumerate(days):
         r, c = divmod(i, cols)
         x0 = grid_left + c * cell_w
         y0 = grid_top + r * cell_h
 
-        # Colors
+        # Sunday red
         is_sunday = (c == 0)
         date_color = RED if is_sunday else TEXT
-        # 이전/다음달 날짜는 흐리게 처리하고 싶다면 아래 주석 해제
-        # if day.month != month: date_color = (150, 150, 150)
 
-        # 1. 날짜 그리기
+        # =========================
+        # Date + TODAY underline (bbox 기반, 고정 노브 적용)
+        # =========================
         s = str(day.day)
         sw = draw2.textlength(s, font=font_date)
         sx = x0 + (cell_w - sw) / 2
-        sy = y0 + int(cell_h * 0.1) # 상단에서 조금 내려온 위치
+        sy = y0 + int(cell_h * DATE_TOP_PAD_FRAC)
 
         draw2.text((sx, sy), s, fill=date_color, font=font_date)
 
-        # [중요] 날짜 텍스트의 정확한 하단 경계(bbox) 구하기
         bx1, by1, bx2, by2 = draw2.textbbox((sx, sy), s, font=font_date)
 
-        # [수정 2] 오늘 날짜 Underline 위치 고정 (숫자 바로 아래)
         if day == today:
-            uy = by2 + (3 * SCALE) # 숫자 밑변에서 3px 아래
-            ux1 = bx1 + int((bx2 - bx1) * 0.05)
-            ux2 = bx2 - int((bx2 - bx1) * 0.05)
-            draw2.line(
-                [(ux1, uy), (ux2, uy)],
-                fill=RED,
-                width=max(1, int(3 * SCALE))
-            )
+            uy = by2 + UNDERLINE_GAP
+            inset = int((bx2 - bx1) * UNDERLINE_INSET_FRAC)
+            ux1 = bx1 + inset
+            ux2 = bx2 - inset
+            draw2.line([(ux1, uy), (ux2, uy)], fill=RED, width=UNDERLINE_W)
 
-        # [수정 1] 일정 영역 시작점 계산 (겹침 방지)
-        # 기존: cell_h * 0.58 (고정 비율) -> 변경: 날짜 텍스트 끝(by2) + 패딩
+        # =========================
+        # Events (bbox 기반: 날짜와 절대 안 겹치게 + 셀 남은공간에 맞춰 자동 줄수 조절)
+        # =========================
         evs = events_by_date.get(day, [])
         if evs:
-            # 날짜 숫자 끝 + Underline 고려(약 15 scale)
-            event_start_y = by2 + (15 * SCALE) 
-            
+            # 날짜 bbox 아래에서 시작 (겹침 방지)
+            base_y = by2 + EVENT_TOP_PAD
+
+            # 최소 시작선 확보(특이 케이스 방지)
+            min_base = y0 + int(cell_h * 0.45)
+            if base_y < min_base:
+                base_y = min_base
+
             left_pad = x0 + EVENT_LEFT_PAD
             dot_r = int(3 * SCALE)
             text_x = left_pad + EVENT_TEXT_GAP
-            max_text_w = (x0 + cell_w) - text_x - (4 * SCALE)
-            line_gap = int(20 * SCALE) # 줄 간격
+            max_text_w = (x0 + cell_w) - text_x - (6 * SCALE)
 
-            for idx, t in enumerate(evs[:2]):
+            # 셀 하단을 넘지 않도록 표시 가능한 줄 수 계산
+            cell_bottom_limit = y0 + cell_h - EVENT_BOTTOM_PAD
+            available_h = cell_bottom_limit - base_y
+            if available_h > 0:
+                max_lines = int(available_h // EVENT_LINE_GAP) + 1
+                max_lines = max(0, min(2, max_lines))  # 최대 2줄 유지
+            else:
+                max_lines = 0
+
+            for idx, t in enumerate(evs[:max_lines]):
                 t2 = truncate(draw2, t, font_event, max_text_w)
                 if not t2:
                     continue
-                
-                ty = event_start_y + idx * line_gap
-                
-                # 만약 셀 영역을 벗어나면 그리지 않음 (선택 사항)
-                if ty + line_gap > y0 + cell_h:
-                    break
+                ty = base_y + idx * EVENT_LINE_GAP
 
-                # Red Dot
+                # red dot
                 cx = left_pad + dot_r
-                # 텍스트 높이의 중간쯤에 점 찍기
-                ev_bbox = draw2.textbbox((text_x, ty), t2, font=font_event)
-                text_height = ev_bbox[3] - ev_bbox[1]
-                cy = ty + (text_height // 2) + (2 * SCALE) # 시각적 보정
-
+                cy = ty + int(7 * SCALE)
                 draw2.ellipse([cx - dot_r, cy - dot_r, cx + dot_r, cy + dot_r], fill=RED)
 
-                # Text
+                # text
                 draw2.text((text_x, ty), t2, fill=TEXT, font=font_event)
 
     # =========================
-    # 5-day forecast
+    # 5-day forecast (BOTTOM)
     # =========================
     ensure_icons()
     lat = float(os.getenv("OPENWEATHER_LAT", "37.5665"))
@@ -352,14 +371,15 @@ def main():
 
     # separator line
     sep_y = forecast_top + (2 * SCALE)
-    draw2.line([(fx0, sep_y), (fx1, sep_y)], fill=(0, 0, 0), width=int(2*SCALE))
+    draw2.line([(fx0, sep_y), (fx1, sep_y)], fill=(0, 0, 0), width=1)
 
-    content_top = forecast_top + (15 * SCALE)
-    
-    icon_size = int(45 * SCALE) # 아이콘 약간 키움
+    content_top = forecast_top + (10 * SCALE)
+    content_bottom = forecast_bottom - (6 * SCALE)
+
+    icon_size = int(40 * SCALE)
     label_y = content_top
-    icon_y = content_top + int(24 * SCALE)
-    temp_y = icon_y + icon_size + int(8 * SCALE)
+    icon_y = content_top + int(22 * SCALE)
+    temp_y = icon_y + icon_size + int(6 * SCALE)
 
     def fmt_minmax(tmin, tmax):
         if tmin is None or tmax is None:
@@ -389,14 +409,13 @@ def main():
             tw2 = draw2.textlength(tstr, font=font_temp)
             draw2.text((x_center - tw2 / 2, temp_y), tstr, fill=TEXT, font=font_temp)
 
-    # Downscale
+    # Downscale (anti-aliasing)
     img = img2.resize((W, H), resample=Image.Resampling.LANCZOS)
 
-    # Save
+    # Save (DO NOT change these paths)
     os.makedirs("docs", exist_ok=True)
     img.save("docs/latest.png")
     img.save("docs/latest.bmp")
-    print("Render complete: docs/latest.bmp")
 
 if __name__ == "__main__":
     main()
