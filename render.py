@@ -64,11 +64,21 @@ def get_5day_forecast(lat, lon, tzname="Asia/Seoul"):
 def fetch_events_by_date(tzname="Asia/Seoul", max_per_day=2):
     url = os.getenv("ICAL_URL", "").strip()
     if not url:
-        return {}, "NO URL" # URL 없음 에러 반환
+        return {}, "NO URL"
+
+    # [핵심 수정 1] webcal 프로토콜을 https로 강제 변환 (이게 없어서 에러남)
+    if url.startswith("webcal://"):
+        url = "https://" + url[len("webcal://"):]
+    
+    # [핵심 수정 2] 일부 서버(구글/애플) 차단 방지용 헤더 추가
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
 
     try:
-        r = requests.get(url, timeout=30) # 타임아웃 30초로 증가
-        r.raise_for_status() # HTTP 에러 체크
+        r = requests.get(url, headers=headers, timeout=30)
+        r.raise_for_status()
+        
         cal = Calendar.from_ical(r.text)
         tz = pytz.timezone(tzname)
         events = {}
@@ -76,30 +86,29 @@ def fetch_events_by_date(tzname="Asia/Seoul", max_per_day=2):
         for comp in cal.walk():
             if comp.name != "VEVENT": continue
             
-            # dtstart 체크
             if not comp.get("dtstart"): continue
             dtstart = comp.get("dtstart").dt
-
             summary = str(comp.get("summary", "")).strip()
             
-            # 날짜 변환 로직 단순화 및 강화
             try:
                 if isinstance(dtstart, datetime):
                     if dtstart.tzinfo is None: 
                         dtstart = tz.localize(dtstart)
                     day = dtstart.astimezone(tz).date()
                 else: 
-                    day = dtstart # date 객체
-                
+                    day = dtstart
                 events.setdefault(day, []).append(summary)
             except Exception:
-                continue # 날짜 변환 실패시 건너뜀
+                continue
             
         for d in events: events[d] = events[d][:max_per_day]
         return events, "OK"
     except Exception as e:
-        print(f"ICS ERROR: {e}")
-        return {}, f"ERR: {str(e)[:10]}"
+        # 에러 메시지를 좀 더 명확하게 단축
+        err_msg = str(e)
+        if "No connection adapters" in err_msg:
+            return {}, "ERR: Protocol"
+        return {}, f"ERR: {err_msg[:10]}"
 
 def truncate(draw, text, font, max_w):
     if not text: return ""
@@ -158,16 +167,16 @@ def main():
         draw2.text((x - dw / 2, grid_top + 10*SCALE), dch, fill=color, font=font_dow)
 
     # ---------------------------------------------------------
-    # [중요] 일정 가져오기 및 디버깅 메시지 표시
+    # ICS Fetching
     # ---------------------------------------------------------
     events, status_msg = fetch_events_by_date()
     
-    # 디버깅: ICS 상태를 우측 상단(시간 아래)에 작게 표시
+    # 에러 메시지 표시 (성공시 표시 안함)
     if status_msg != "OK":
-        draw2.text((W2 - SIDE_MARGIN - 100*SCALE, TOP_MARGIN + 20*SCALE), f"ICS: {status_msg}", fill=RED, font=font_debug)
+        draw2.text((W2 - SIDE_MARGIN - 120*SCALE, TOP_MARGIN + 20*SCALE), f"ICS: {status_msg}", fill=RED, font=font_debug)
 
-    # 디버깅: 오늘 날짜에 "강제 테스트" 일정 주입 (좌표 확인용)
-    events.setdefault(now.date(), []).insert(0, "●테스트일정")
+    # [테스트용 코드 삭제됨] 이제 실제 데이터가 나올 것이므로 테스트 일정 삭제
+    # events.setdefault(now.date(), []).insert(0, "●테스트일정")
 
     # Draw Days
     grid_days_top = grid_top + cell_h
@@ -198,11 +207,8 @@ def main():
             # 좌표: y0 + 56 (날짜 바로 아래)
             ev_y = y0 + (56 * SCALE) + (idx * 24 * SCALE)
             
-            # 글자가 너무 길면 자르기
             txt = truncate(draw2, ev, font_event, cell_w - 4*SCALE)
             tw = draw2.textlength(txt, font=font_event)
-            
-            # 그리기
             draw2.text((x0 + (cell_w - tw)/2, ev_y), txt, fill=TEXT, font=font_event)
 
     # 4. Bottom 5-Day Forecast
