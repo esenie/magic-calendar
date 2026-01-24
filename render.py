@@ -215,8 +215,8 @@ def main():
     # =========================
     # Tuning knobs (NEW)
     # =========================
-    GRID_TO_FORECAST_GAP = 12 * SCALE   # (문제3) 마지막 주 ↔ 5일예보 사이 여백
-    FORECAST_H = 145 * SCALE           # 5일예보 높이 (135~160 튜닝 추천)
+    GRID_TO_FORECAST_GAP = 4 * SCALE   # (문제3) 마지막 주 ↔ 5일예보 사이 여백
+    FORECAST_H = 130 * SCALE           # 5일예보 높이 (135~160 튜닝 추천)
 
     DATE_TOP_PAD_FRAC = 0.10           # 날짜 y 시작(셀 높이 대비 비율)
     EVENT_TOP_PAD = 10 * SCALE          # 날짜 bbox 아래로 이벤트 시작 여백 (문제1)
@@ -241,7 +241,7 @@ def main():
     month_bottom = month_y + font_month.size
 
     # ---------- DOW + GRID positioning ----------
-    month_to_dow_gap = 40 * SCALE
+    month_to_dow_gap = 30 * SCALE
     dow_y = month_bottom + month_to_dow_gap
 
     # ---------- Bottom 5-day forecast area ----------
@@ -254,7 +254,7 @@ def main():
     grid_right = W2 - side_margin
     grid_w = grid_right - grid_left
 
-    grid_top = dow_y + (40 * SCALE)
+    grid_top = dow_y + (28 * SCALE)
     grid_bottom = forecast_top - GRID_TO_FORECAST_GAP  # (NEW) gap control
 
     cols, rows = 7, 6
