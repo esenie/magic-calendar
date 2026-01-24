@@ -63,36 +63,43 @@ def get_5day_forecast(lat, lon, tzname="Asia/Seoul"):
 
 def fetch_events_by_date(tzname="Asia/Seoul", max_per_day=2):
     url = os.getenv("ICAL_URL", "").strip()
-    if not url: return {}
+    if not url:
+        return {}, "NO URL" # URL 없음 에러 반환
+
     try:
-        r = requests.get(url, timeout=25)
+        r = requests.get(url, timeout=30) # 타임아웃 30초로 증가
+        r.raise_for_status() # HTTP 에러 체크
         cal = Calendar.from_ical(r.text)
         tz = pytz.timezone(tzname)
         events = {}
+        
         for comp in cal.walk():
             if comp.name != "VEVENT": continue
             
-            # 안전장치: dtstart가 없는 비정상 데이터 스킵
-            d_prop = comp.get("dtstart")
-            if not d_prop: continue
-            dtstart = d_prop.dt
+            # dtstart 체크
+            if not comp.get("dtstart"): continue
+            dtstart = comp.get("dtstart").dt
 
             summary = str(comp.get("summary", "")).strip()
             
-            if isinstance(dtstart, datetime):
-                if dtstart.tzinfo is None: dtstart = tz.localize(dtstart)
-                day = dtstart.astimezone(tz).date()
-            else: 
-                # date 객체인 경우 (종일 일정)
-                day = dtstart
+            # 날짜 변환 로직 단순화 및 강화
+            try:
+                if isinstance(dtstart, datetime):
+                    if dtstart.tzinfo is None: 
+                        dtstart = tz.localize(dtstart)
+                    day = dtstart.astimezone(tz).date()
+                else: 
+                    day = dtstart # date 객체
                 
-            events.setdefault(day, []).append(summary)
+                events.setdefault(day, []).append(summary)
+            except Exception:
+                continue # 날짜 변환 실패시 건너뜀
             
         for d in events: events[d] = events[d][:max_per_day]
-        return events
+        return events, "OK"
     except Exception as e:
-        print(f"ICS Error: {e}") # 로그 확인용
-        return {}
+        print(f"ICS ERROR: {e}")
+        return {}, f"ERR: {str(e)[:10]}"
 
 def truncate(draw, text, font, max_w):
     if not text: return ""
@@ -116,11 +123,12 @@ def main():
 
     # Fonts
     font_month = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 230 * SCALE)
-    font_date  = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 42 * SCALE)
+    font_date  = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 40 * SCALE)
     font_dow   = ImageFont.truetype("assets/NanumGothicBold.ttf", 32 * SCALE)
     font_event = ImageFont.truetype("assets/NanumSquareR.ttf", 16 * SCALE)
     font_label = ImageFont.truetype("assets/Inter_28pt-ExtraLight.ttf", 14 * SCALE)
     font_temp  = ImageFont.truetype("assets/Inter_28pt-ExtraLight.ttf", 13 * SCALE)
+    font_debug = ImageFont.truetype("assets/NanumGothicBold.ttf", 12 * SCALE)
 
     SIDE_MARGIN = 15 * SCALE
     TOP_MARGIN = 20 * SCALE
@@ -139,9 +147,7 @@ def main():
     # 3. Grid Calculation
     grid_top = TOP_MARGIN + (260 * SCALE) 
     grid_bottom = H2 - BOTTOM_WIDGET_H - (10 * SCALE)
-    
     cell_w = (W2 - 2 * SIDE_MARGIN) / 7
-    # 7줄 (요일 헤더 1줄 + 날짜 6줄)
     cell_h = (grid_bottom - grid_top) / 7
 
     # Draw DOW
@@ -151,18 +157,29 @@ def main():
         dw = draw2.textlength(dch, font=font_dow)
         draw2.text((x - dw / 2, grid_top + 10*SCALE), dch, fill=color, font=font_dow)
 
+    # ---------------------------------------------------------
+    # [중요] 일정 가져오기 및 디버깅 메시지 표시
+    # ---------------------------------------------------------
+    events, status_msg = fetch_events_by_date()
+    
+    # 디버깅: ICS 상태를 우측 상단(시간 아래)에 작게 표시
+    if status_msg != "OK":
+        draw2.text((W2 - SIDE_MARGIN - 100*SCALE, TOP_MARGIN + 20*SCALE), f"ICS: {status_msg}", fill=RED, font=font_debug)
+
+    # 디버깅: 오늘 날짜에 "강제 테스트" 일정 주입 (좌표 확인용)
+    events.setdefault(now.date(), []).insert(0, "●테스트일정")
+
     # Draw Days
     grid_days_top = grid_top + cell_h
     cal_obj = calendar.Calendar(firstweekday=6)
     days = list(cal_obj.itermonthdates(year, month))[:42]
-    events = fetch_events_by_date()
 
     for i, day in enumerate(days):
         r, c = divmod(i, 7)
         x0 = SIDE_MARGIN + c * cell_w
         y0 = grid_days_top + r * cell_h
         
-        # Date Number (상단 배치)
+        # Date Number
         d_color = RED if c == 0 else TEXT
         if day.month != month: d_color = FADE 
         
@@ -175,16 +192,17 @@ def main():
             ux = x0 + cell_w * 0.3
             draw2.line([(ux, y0 + 48*SCALE), (x0 + cell_w * 0.7, y0 + 48*SCALE)], fill=RED, width=3)
 
-        # Events Drawing (날짜 바로 아래쪽으로 위치 당김)
+        # Events
         day_evs = events.get(day, [])
         for idx, ev in enumerate(day_evs):
-            # idx=0일 때 y0+58, idx=1일 때 y0+82 (충분히 안전한 위치)
-            ev_y = y0 + (58 * SCALE) + (idx * 24 * SCALE)
+            # 좌표: y0 + 56 (날짜 바로 아래)
+            ev_y = y0 + (56 * SCALE) + (idx * 24 * SCALE)
             
-            txt = truncate(draw2, ev, font_event, cell_w - 6*SCALE)
+            # 글자가 너무 길면 자르기
+            txt = truncate(draw2, ev, font_event, cell_w - 4*SCALE)
             tw = draw2.textlength(txt, font=font_event)
             
-            # 텍스트 중앙 정렬해서 그리기
+            # 그리기
             draw2.text((x0 + (cell_w - tw)/2, ev_y), txt, fill=TEXT, font=font_event)
 
     # 4. Bottom 5-Day Forecast
