@@ -4,7 +4,6 @@ import calendar
 import pytz
 import os
 import requests
-import subprocess
 from icalendar import Calendar
 
 # =========================
@@ -16,13 +15,13 @@ W2, H2 = W * SCALE, H * SCALE
 
 # Colors
 TEXT = (0, 0, 0)
-FADE = (200, 200, 200) # 이전/다음달용 연한 회색
+FADE = (180, 180, 180) 
 RED  = (200, 0, 0)
 DOW = ["S", "M", "T", "W", "T", "F", "S"]
 ICON_DIR = "assets/weather"
 
 # -------------------------
-# Helpers
+# Helpers (Forecast, ICS 등은 동일하게 유지)
 # -------------------------
 def code_to_kind(wid: int) -> str:
     if 200 <= wid <= 232: return "thunder"
@@ -46,34 +45,25 @@ def get_5day_forecast(lat, lon, tzname="Asia/Seoul"):
         data = r.json()
         tz = pytz.timezone(tzname)
         today = datetime.now(tz).date()
-        
         daily_data = {}
         for item in data.get("list", []):
             dt = datetime.fromtimestamp(item["dt"], tz)
             d = dt.date()
             if d <= today: continue
-            
             if d not in daily_data:
                 daily_data[d] = {"min": item["main"]["temp"], "max": item["main"]["temp"], "kind": item["weather"][0]["id"]}
             else:
                 daily_data[d]["min"] = min(daily_data[d]["min"], item["main"]["temp"])
                 daily_data[d]["max"] = max(daily_data[d]["max"], item["main"]["temp"])
-        
         result = []
         for d in sorted(daily_data.keys())[:5]:
-            result.append({
-                "date": d, 
-                "kind": code_to_kind(daily_data[d]["kind"]),
-                "min": daily_data[d]["min"],
-                "max": daily_data[d]["max"]
-            })
+            result.append({"date": d, "kind": code_to_kind(daily_data[d]["kind"]), "min": daily_data[d]["min"], "max": daily_data[d]["max"]})
         return result
     except: return []
 
 def fetch_events_by_date(tzname="Asia/Seoul", max_per_day=2):
     url = os.getenv("ICAL_URL", "").strip()
     if not url: return {}
-    if url.startswith("webcal://"): url = "https://" + url[len("webcal://"):]
     try:
         r = requests.get(url, timeout=25)
         cal = Calendar.from_ical(r.text)
@@ -111,11 +101,11 @@ def main():
     img2 = Image.new("RGB", (W2, H2), "white")
     draw2 = ImageDraw.Draw(img2)
 
-    # Fonts
+    # Fonts (가독성을 위해 일정 폰트를 살짝 조정)
     font_month = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 230 * SCALE)
-    font_date  = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 44 * SCALE)
+    font_date  = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 40 * SCALE) # 날짜 살짝 축소
     font_dow   = ImageFont.truetype("assets/NanumGothicBold.ttf", 32 * SCALE)
-    font_event = ImageFont.truetype("assets/NanumSquareR.ttf", 15 * SCALE)
+    font_event = ImageFont.truetype("assets/NanumSquareR.ttf", 16 * SCALE)
     font_label = ImageFont.truetype("assets/Inter_28pt-ExtraLight.ttf", 14 * SCALE)
     font_temp  = ImageFont.truetype("assets/Inter_28pt-ExtraLight.ttf", 13 * SCALE)
 
@@ -128,17 +118,16 @@ def main():
     uw = draw2.textlength(updated, font=font_label)
     draw2.text((W2 - SIDE_MARGIN - uw, TOP_MARGIN), updated, fill=TEXT, font=font_label)
 
-    # 2. Month (간격 확보를 위해 TOP_MARGIN에서 시작)
+    # 2. Month (충분한 높이 확보)
     mstr = str(month)
     mw = draw2.textlength(mstr, font=font_month)
     draw2.text(((W2 - mw) / 2, TOP_MARGIN - 10*SCALE), mstr, fill=TEXT, font=font_month)
 
-    # 3. Grid Calculation (요일이 숫자 '1'과 겹치지 않게 grid_top 조정)
-    grid_top = TOP_MARGIN + (260 * SCALE) # 숫자 아래로 넉넉히 내림
+    # 3. Grid Calculation
+    grid_top = TOP_MARGIN + (280 * SCALE) # '1' 숫자와 요일 간격 대폭 확대
     grid_bottom = H2 - BOTTOM_WIDGET_H - (20 * SCALE)
     
     cell_w = (W2 - 2 * SIDE_MARGIN) / 7
-    # 요일 행과 날짜 6행을 포함한 높이 계산
     total_grid_h = grid_bottom - grid_top
     cell_h = total_grid_h / 7 
 
@@ -150,7 +139,7 @@ def main():
         draw2.text((x - dw / 2, grid_top), dch, fill=color, font=font_dow)
 
     # Draw Days
-    grid_actual_top = grid_top + (60 * SCALE) # 요일 문구와 날짜 숫자 사이 간격
+    grid_actual_top = grid_top + (70 * SCALE) 
     cal_obj = calendar.Calendar(firstweekday=6)
     days = list(cal_obj.itermonthdates(year, month))[:42]
     events = fetch_events_by_date()
@@ -160,29 +149,30 @@ def main():
         x0 = SIDE_MARGIN + c * cell_w
         y0 = grid_actual_top + r * ((grid_bottom - grid_actual_top)/6)
         
-        # Date Number
+        # 겹침 방지의 핵심: 날짜를 셀의 상단에 고정
         d_color = RED if c == 0 else TEXT
         if day.month != month: d_color = FADE 
         
         ds = str(day.day)
         dw = draw2.textlength(ds, font=font_date)
-        # 날짜 숫자를 셀 상단에 배치
+        # y0 지점(셀의 시작점)에 바로 날짜 배치
         draw2.text((x0 + (cell_w - dw)/2, y0), ds, fill=d_color, font=font_date)
 
         # Today Underline
         if day == now.date():
             ux = x0 + cell_w * 0.3
-            draw2.line([(ux, y0 + 55*SCALE), (x0 + cell_w * 0.7, y0 + 55*SCALE)], fill=RED, width=3)
+            draw2.line([(ux, y0 + 48*SCALE), (x0 + cell_w * 0.7, y0 + 48*SCALE)], fill=RED, width=3)
 
-        # Events (날짜 숫자와 겹치지 않게 y0 + 65*SCALE 부터 시작)
+        # Events (날짜 숫자와 겹치지 않게 'y0 + 55*SCALE' 부터 시작)
         day_evs = events.get(day, [])
         for idx, ev in enumerate(day_evs):
-            ev_y = y0 + (68 * SCALE) + (idx * 22 * SCALE)
-            txt = truncate(draw2, ev, font_event, cell_w - 10*SCALE)
+            ev_y = y0 + (58 * SCALE) + (idx * 24 * SCALE)
+            txt = truncate(draw2, ev, font_event, cell_w - 15*SCALE)
             tw = draw2.textlength(txt, font=font_event)
+            # 일정은 중앙 정렬
             draw2.text((x0 + (cell_w - tw)/2, ev_y), txt, fill=TEXT, font=font_event)
 
-    # 4. Bottom 5-Day Forecast (Min/Max 추가)
+    # 4. Bottom 5-Day Forecast
     forecasts = get_5day_forecast(lat, lon)
     if forecasts:
         line_y = H2 - BOTTOM_WIDGET_H
@@ -190,15 +180,12 @@ def main():
         f_box_w = (W2 - 2 * SIDE_MARGIN) / 5
         for i, f in enumerate(forecasts):
             fx = SIDE_MARGIN + (i * f_box_w)
-            # Day
             d_str = f["date"].strftime("%a").upper()
             draw2.text((fx + (f_box_w - draw2.textlength(d_str, font=font_label))/2, line_y + 20*SCALE), d_str, fill=TEXT, font=font_label)
-            # Icon
             icon = load_icon(f["kind"])
             if icon:
                 icon = icon.resize((50*SCALE, 50*SCALE))
                 img2.paste(icon, (int(fx + (f_box_w - 50*SCALE)/2), int(line_y + 45*SCALE)), icon)
-            # Temp (Min/Max)
             t_str = f"{int(round(f['min']))}°/{int(round(f['max']))}°"
             draw2.text((fx + (f_box_w - draw2.textlength(t_str, font=font_temp))/2, line_y + 105*SCALE), t_str, fill=TEXT, font=font_temp)
 
