@@ -215,13 +215,13 @@ def main():
     # =========================
     # Tuning knobs (NEW)
     # =========================
-    GRID_TO_FORECAST_GAP = 26 * SCALE   # (문제3) 마지막 주 ↔ 5일예보 사이 여백
+    GRID_TO_FORECAST_GAP = 12 * SCALE   # (문제3) 마지막 주 ↔ 5일예보 사이 여백
     FORECAST_H = 145 * SCALE           # 5일예보 높이 (135~160 튜닝 추천)
 
     DATE_TOP_PAD_FRAC = 0.10           # 날짜 y 시작(셀 높이 대비 비율)
-    EVENT_TOP_PAD = 8 * SCALE          # 날짜 bbox 아래로 이벤트 시작 여백 (문제1)
+    EVENT_TOP_PAD = 10 * SCALE          # 날짜 bbox 아래로 이벤트 시작 여백 (문제1)
     EVENT_BOTTOM_PAD = 10 * SCALE      # 셀 바닥 여백
-    EVENT_LINE_GAP = 17 * SCALE        # 이벤트 줄 간격
+    EVENT_LINE_GAP = 22 * SCALE        # 이벤트 줄 간격
 
     UNDERLINE_GAP = 1 * SCALE          # (문제2) 글자 bbox 밑으로 밑줄 간격
     UNDERLINE_INSET_FRAC = 0.06        # 밑줄 좌/우 inset (bbox width 대비)
