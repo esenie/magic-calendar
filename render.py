@@ -4,24 +4,32 @@ import calendar
 import pytz
 import os
 import requests
+import subprocess
 from icalendar import Calendar
 
 # =========================
-# Canvas & Scaling
+# Canvas (final output)
 # =========================
 W, H = 680, 960
-SCALE = 2
+
+# =========================
+# Supersampling (anti-aliasing)
+# =========================
+SCALE = 2  # 2x render -> downscale
 W2, H2 = W * SCALE, H * SCALE
 
-# Colors
+# =========================
+# Colors (E-Ink friendly)
+# =========================
 TEXT = (0, 0, 0)
-FADE = (180, 180, 180) 
 RED  = (200, 0, 0)
+WHITE = (255, 255, 255)
+
 DOW = ["S", "M", "T", "W", "T", "F", "S"]
 ICON_DIR = "assets/weather"
 
 # -------------------------
-# Helpers
+# Weather helpers
 # -------------------------
 def code_to_kind(wid: int) -> str:
     if 200 <= wid <= 232: return "thunder"
@@ -29,209 +37,367 @@ def code_to_kind(wid: int) -> str:
     if 600 <= wid <= 622: return "snow"
     if 701 <= wid <= 781: return "fog"
     if wid == 800:        return "sun"
+    if 801 <= wid <= 804: return "cloud"
     return "cloud"
 
-def load_icon(kind: str):
-    p = os.path.join(ICON_DIR, f"{kind}.png")
-    return Image.open(p).convert("RGBA") if os.path.exists(p) else None
+def ensure_icons():
+    need = ["sun","cloud","rain","snow","thunder","fog"]
+    if all(os.path.exists(os.path.join(ICON_DIR, f"{k}.png")) for k in need):
+        return
+    if os.path.exists("make_icons.py"):
+        subprocess.run(["python", "make_icons.py"], check=False)
 
-def get_5day_forecast(lat, lon, tzname="Asia/Seoul"):
+def load_icon(kind: str):
+    if not kind:
+        return None
+    p = os.path.join(ICON_DIR, f"{kind}.png")
+    if not os.path.exists(p):
+        return None
+    return Image.open(p).convert("RGBA")
+
+def get_5day_forecast(lat: float, lon: float, tzname="Asia/Seoul"):
+    """
+    Returns a list of up to 5 dicts:
+    [
+      { 'date': date_obj, 'kind': 'sun', 'min': 10, 'max': 20 },
+      ...
+    ]
+    """
     api_key = os.getenv("OPENWEATHER_API_KEY", "").strip()
-    if not api_key: return []
+    if not api_key:
+        return []
+
     url = "https://api.openweathermap.org/data/2.5/forecast"
     params = {"lat": lat, "lon": lon, "appid": api_key, "units": "metric"}
+    
     try:
         r = requests.get(url, params=params, timeout=20)
+        r.raise_for_status()
         data = r.json()
-        tz = pytz.timezone(tzname)
-        today = datetime.now(tz).date()
-        daily_data = {}
-        for item in data.get("list", []):
-            dt = datetime.fromtimestamp(item["dt"], tz)
-            d = dt.date()
-            if d <= today: continue
-            if d not in daily_data:
-                daily_data[d] = {"min": item["main"]["temp"], "max": item["main"]["temp"], "kind": item["weather"][0]["id"]}
-            else:
-                daily_data[d]["min"] = min(daily_data[d]["min"], item["main"]["temp"])
-                daily_data[d]["max"] = max(daily_data[d]["max"], item["main"]["temp"])
-        result = []
-        for d in sorted(daily_data.keys())[:5]:
-            result.append({"date": d, "kind": code_to_kind(daily_data[d]["kind"]), "min": daily_data[d]["min"], "max": daily_data[d]["max"]})
-        return result
-    except: return []
+    except Exception:
+        return []
 
+    tz = pytz.timezone(tzname)
+    now_date = datetime.now(tz).date()
+    
+    # Organize by date
+    daily_data = {} # date -> { 'temps': [], 'codes': [] }
+
+    for item in data.get("list", []):
+        dt = datetime.fromtimestamp(item["dt"], tz)
+        d = dt.date()
+        
+        # Skip past (though usually API gives future)
+        if d < now_date:
+            continue
+            
+        if d not in daily_data:
+            daily_data[d] = {'temps': [], 'codes': []}
+        
+        main = item.get("main", {})
+        temp = main.get("temp")
+        if isinstance(temp, (int, float)):
+            daily_data[d]['temps'].append(temp)
+            
+        if item.get("weather"):
+            daily_data[d]['codes'].append(int(item["weather"][0]["id"]))
+
+    # Convert to result list (take first 5 days found)
+    results = []
+    sorted_dates = sorted(daily_data.keys())[:5]
+
+    for d in sorted_dates:
+        temps = daily_data[d]['temps']
+        codes = daily_data[d]['codes']
+        
+        if not temps: 
+            continue
+            
+        tmin = min(temps)
+        tmax = max(temps)
+        
+        # For icon: simple logic, pick most frequent or just the first valid one
+        # Here we prefer rain/snow icons if they exist in the day to warn the user
+        # Priorities: Snow(6xx) > Rain(5xx,3xx) > Thunder(2xx) > Fog > Cloud > Sun
+        # But for simplicity, let's just pick the code that appears most or the "worst" one.
+        # Let's pick the one that occurs in the middle of the list (midday) usually represents the day well.
+        if codes:
+            mid_idx = len(codes) // 2
+            rep_code = codes[mid_idx]
+            kind = code_to_kind(rep_code)
+        else:
+            kind = "cloud"
+
+        results.append({
+            'date': d,
+            'kind': kind,
+            'min': tmin,
+            'max': tmax
+        })
+        
+    return results
+
+# -------------------------
+# ICS helpers
+# -------------------------
 def fetch_events_by_date(tzname="Asia/Seoul", max_per_day=2):
     url = os.getenv("ICAL_URL", "").strip()
     if not url:
-        return {}, "NO URL"
+        return {}
 
-    # [핵심 수정 1] webcal 프로토콜을 https로 강제 변환 (이게 없어서 에러남)
     if url.startswith("webcal://"):
         url = "https://" + url[len("webcal://"):]
-    
-    # [핵심 수정 2] 일부 서버(구글/애플) 차단 방지용 헤더 추가
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
 
     try:
-        r = requests.get(url, headers=headers, timeout=30)
+        r = requests.get(url, timeout=25)
         r.raise_for_status()
-        
         cal = Calendar.from_ical(r.text)
-        tz = pytz.timezone(tzname)
-        events = {}
-        
-        for comp in cal.walk():
-            if comp.name != "VEVENT": continue
-            
-            if not comp.get("dtstart"): continue
-            dtstart = comp.get("dtstart").dt
-            summary = str(comp.get("summary", "")).strip()
-            
-            try:
-                if isinstance(dtstart, datetime):
-                    if dtstart.tzinfo is None: 
-                        dtstart = tz.localize(dtstart)
-                    day = dtstart.astimezone(tz).date()
-                else: 
-                    day = dtstart
-                events.setdefault(day, []).append(summary)
-            except Exception:
-                continue
-            
-        for d in events: events[d] = events[d][:max_per_day]
-        return events, "OK"
-    except Exception as e:
-        # 에러 메시지를 좀 더 명확하게 단축
-        err_msg = str(e)
-        if "No connection adapters" in err_msg:
-            return {}, "ERR: Protocol"
-        return {}, f"ERR: {err_msg[:10]}"
+    except Exception:
+        return {}
+
+    tz = pytz.timezone(tzname)
+    events = {}
+    
+    for comp in cal.walk():
+        if comp.name != "VEVENT":
+            continue
+
+        dtstart = comp.get("dtstart")
+        if not dtstart:
+            continue
+        dtstart = dtstart.dt
+
+        summary = str(comp.get("summary", "")).strip()
+        if not summary:
+            continue
+
+        if isinstance(dtstart, datetime):
+            if dtstart.tzinfo is None:
+                dtstart = tz.localize(dtstart)
+            day = dtstart.astimezone(tz).date()
+        else:
+            day = dtstart
+
+        events.setdefault(day, []).append(summary)
+
+    for d in list(events.keys()):
+        events[d] = events[d][:max_per_day]
+
+    return events
 
 def truncate(draw, text, font, max_w):
-    if not text: return ""
-    text = text.replace("\n", " ").strip()
-    if draw.textlength(text, font=font) <= max_w: return text
-    while text and draw.textlength(text + "…", font=font) > max_w: text = text[:-1]
-    return text + "…"
+    text = (text or "").replace("\n", " ").strip()
+    if not text:
+        return ""
+    if draw.textlength(text, font=font) <= max_w:
+        return text
+    ell = "…"
+    while text and draw.textlength(text + ell, font=font) > max_w:
+        text = text[:-1]
+    return text + ell
 
-# -------------------------
-# Main Logic
-# -------------------------
+# =========================
+# Main
+# =========================
 def main():
     tz = pytz.timezone("Asia/Seoul")
     now = datetime.now(tz)
+    today = now.date()
     year, month = now.year, now.month
-    lat = float(os.getenv("OPENWEATHER_LAT", "37.5665"))
-    lon = float(os.getenv("OPENWEATHER_LON", "126.9780"))
 
+    # Canvas
     img2 = Image.new("RGB", (W2, H2), "white")
     draw2 = ImageDraw.Draw(img2)
 
+    # -------------------------
     # Fonts
-    font_month = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 230 * SCALE)
+    # -------------------------
+    # Sizes tuned for 2x scale
+    font_month = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 60 * SCALE)
+    font_update = ImageFont.truetype("assets/Inter_28pt-ExtraLight.ttf", 12 * SCALE)
+    
+    font_dow   = ImageFont.truetype("assets/NanumGothicBold.ttf", 20 * SCALE)
     font_date  = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 40 * SCALE)
-    font_dow   = ImageFont.truetype("assets/NanumGothicBold.ttf", 32 * SCALE)
-    font_event = ImageFont.truetype("assets/NanumSquareR.ttf", 16 * SCALE)
-    font_label = ImageFont.truetype("assets/Inter_28pt-ExtraLight.ttf", 14 * SCALE)
-    font_temp  = ImageFont.truetype("assets/Inter_28pt-ExtraLight.ttf", 13 * SCALE)
-    font_debug = ImageFont.truetype("assets/NanumGothicBold.ttf", 12 * SCALE)
+    font_event = ImageFont.truetype("assets/NanumSquareR.ttf", 15 * SCALE)
+    
+    # Weather fonts
+    font_wx_day = ImageFont.truetype("assets/NanumGothicBold.ttf", 16 * SCALE)
+    font_wx_temp = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 16 * SCALE)
 
-    SIDE_MARGIN = 15 * SCALE
-    TOP_MARGIN = 20 * SCALE
-    BOTTOM_WIDGET_H = 150 * SCALE 
+    # -------------------------
+    # Layout Config
+    # -------------------------
+    # Margins (Minimalist)
+    side_margin = 2 * SCALE  
+    top_margin = 2 * SCALE
+    bottom_margin = 2 * SCALE
 
-    # 1. Update Time
-    updated = now.strftime("%Y-%m-%d %H:%M")
-    uw = draw2.textlength(updated, font=font_label)
-    draw2.text((W2 - SIDE_MARGIN - uw, TOP_MARGIN), updated, fill=TEXT, font=font_label)
+    # Header Area (Month + Update Time)
+    header_h = 80 * SCALE
+    
+    # Footer Area (Weather) - Bottom 15% roughly
+    footer_h = 160 * SCALE 
+    
+    # Grid Area (Calendar)
+    grid_top = top_margin + header_h
+    grid_bottom = H2 - footer_h - bottom_margin
+    grid_h = grid_bottom - grid_top
+    
+    grid_left = side_margin
+    grid_right = W2 - side_margin
+    grid_w = grid_right - grid_left
 
-    # 2. Month
+    # -------------------------
+    # Draw Header
+    # -------------------------
+    # 1. Month (Top Left)
     mstr = str(month)
-    mw = draw2.textlength(mstr, font=font_month)
-    draw2.text(((W2 - mw) / 2, TOP_MARGIN - 10*SCALE), mstr, fill=TEXT, font=font_month)
+    draw2.text((grid_left + 10 * SCALE, top_margin), mstr, fill=TEXT, font=font_month)
+    
+    # 2. Update Time (Top Right)
+    updated = now.strftime("%m-%d %H:%M")
+    uw = draw2.textlength(updated, font=font_update)
+    draw2.text((grid_right - uw - 10 * SCALE, top_margin + 20 * SCALE), updated, fill=TEXT, font=font_update)
 
-    # 3. Grid Calculation
-    grid_top = TOP_MARGIN + (260 * SCALE) 
-    grid_bottom = H2 - BOTTOM_WIDGET_H - (10 * SCALE)
-    cell_w = (W2 - 2 * SIDE_MARGIN) / 7
-    cell_h = (grid_bottom - grid_top) / 7
+    # 3. Year (Optional, small next to month or just skip to save space)
+    # We skip year to keep it clean, as month is big.
 
-    # Draw DOW
+    # -------------------------
+    # Draw Calendar Grid
+    # -------------------------
+    cols, rows = 7, 6  # 6 rows to accommodate all months safely
+    cell_w = grid_w / cols
+    cell_h = grid_h / rows
+    
+    # Draw DOW Headers (Inside the top of grid area, or just above first row)
+    # Let's put DOW at the very top of grid_top
+    dow_h = 30 * SCALE
+    
     for c, dch in enumerate(DOW):
-        x = SIDE_MARGIN + c * cell_w + cell_w / 2
+        x = grid_left + c * cell_w + cell_w / 2
+        y = grid_top
         color = RED if c == 0 else TEXT
         dw = draw2.textlength(dch, font=font_dow)
-        draw2.text((x - dw / 2, grid_top + 10*SCALE), dch, fill=color, font=font_dow)
-
-    # ---------------------------------------------------------
-    # ICS Fetching
-    # ---------------------------------------------------------
-    events, status_msg = fetch_events_by_date()
-    
-    # 에러 메시지 표시 (성공시 표시 안함)
-    if status_msg != "OK":
-        draw2.text((W2 - SIDE_MARGIN - 120*SCALE, TOP_MARGIN + 20*SCALE), f"ICS: {status_msg}", fill=RED, font=font_debug)
-
-    # [테스트용 코드 삭제됨] 이제 실제 데이터가 나올 것이므로 테스트 일정 삭제
-    # events.setdefault(now.date(), []).insert(0, "●테스트일정")
-
+        draw2.text((x - dw / 2, y), dch, fill=color, font=font_dow)
+        
     # Draw Days
-    grid_days_top = grid_top + cell_h
     cal_obj = calendar.Calendar(firstweekday=6)
     days = list(cal_obj.itermonthdates(year, month))[:42]
+    
+    events_by_date = fetch_events_by_date(max_per_day=2)
+
+    # Shift rows down by dow_h to make room for M/T/W...
+    row_start_y = grid_top + dow_h
+    actual_cell_h = (grid_bottom - row_start_y) / rows
 
     for i, day in enumerate(days):
-        r, c = divmod(i, 7)
-        x0 = SIDE_MARGIN + c * cell_w
-        y0 = grid_days_top + r * cell_h
-        
-        # Date Number
-        d_color = RED if c == 0 else TEXT
-        if day.month != month: d_color = FADE 
-        
-        ds = str(day.day)
-        dw = draw2.textlength(ds, font=font_date)
-        draw2.text((x0 + (cell_w - dw)/2, y0 + 5*SCALE), ds, fill=d_color, font=font_date)
+        r, c = divmod(i, cols)
+        x0 = grid_left + c * cell_w
+        y0 = row_start_y + r * actual_cell_h
 
-        # Today Underline
-        if day == now.date():
-            ux = x0 + cell_w * 0.3
-            draw2.line([(ux, y0 + 48*SCALE), (x0 + cell_w * 0.7, y0 + 48*SCALE)], fill=RED, width=3)
+        # Date number
+        s = str(day.day)
+        is_sunday = (c == 0)
+        
+        # Grayscale for other month dates
+        is_this_month = (day.month == month)
+        if not is_this_month:
+            date_color = (150, 150, 150) # Grey
+        else:
+            date_color = RED if is_sunday else TEXT
+
+        sw = draw2.textlength(s, font=font_date)
+        # Position date at top-center of cell
+        sx = x0 + (cell_w - sw) / 2
+        sy = y0 + (5 * SCALE)
+        draw2.text((sx, sy), s, fill=date_color, font=font_date)
+
+        # Today indicator (Circle or Underline)
+        if day == today:
+            # Underline
+            line_y = sy + font_date.size + (2 * SCALE)
+            draw2.line(
+                [(sx, line_y), (sx + sw, line_y)], 
+                fill=RED, width=int(3 * SCALE)
+            )
 
         # Events
-        day_evs = events.get(day, [])
-        for idx, ev in enumerate(day_evs):
-            # 좌표: y0 + 56 (날짜 바로 아래)
-            ev_y = y0 + (56 * SCALE) + (idx * 24 * SCALE)
+        evs = events_by_date.get(day, [])
+        if evs:
+            # Start events below the date
+            event_y_start = sy + font_date.size + (6 * SCALE)
+            line_height = 20 * SCALE
             
-            txt = truncate(draw2, ev, font_event, cell_w - 4*SCALE)
-            tw = draw2.textlength(txt, font=font_event)
-            draw2.text((x0 + (cell_w - tw)/2, ev_y), txt, fill=TEXT, font=font_event)
+            for k, txt in enumerate(evs[:2]):
+                ey = event_y_start + k * line_height
+                if ey + line_height > y0 + actual_cell_h: 
+                    break # Don't overflow cell
+                
+                # Small dot
+                dot_r = 3 * SCALE
+                dx = x0 + 6 * SCALE
+                dy_center = ey + 8 * SCALE
+                draw2.ellipse([dx-dot_r, dy_center-dot_r, dx+dot_r, dy_center+dot_r], fill=RED)
+                
+                # Text
+                t_x = dx + 8 * SCALE
+                max_tw = cell_w - (16 * SCALE)
+                trunc_txt = truncate(draw2, txt, font_event, max_tw)
+                draw2.text((t_x, ey), trunc_txt, fill=TEXT, font=font_event)
 
-    # 4. Bottom 5-Day Forecast
+    # -------------------------
+    # Draw Footer (5-Day Weather)
+    # -------------------------
+    # Separator line
+    draw2.line([(0, grid_bottom), (W2, grid_bottom)], fill=TEXT, width=int(2*SCALE))
+
+    lat = float(os.getenv("OPENWEATHER_LAT", "37.5665"))
+    lon = float(os.getenv("OPENWEATHER_LON", "126.9780"))
+    ensure_icons()
+    
     forecasts = get_5day_forecast(lat, lon)
-    if forecasts:
-        line_y = H2 - BOTTOM_WIDGET_H
-        draw2.line([(SIDE_MARGIN, line_y), (W2 - SIDE_MARGIN, line_y)], fill=TEXT, width=2)
-        f_box_w = (W2 - 2 * SIDE_MARGIN) / 5
-        for i, f in enumerate(forecasts):
-            fx = SIDE_MARGIN + (i * f_box_w)
-            d_str = f["date"].strftime("%a").upper()
-            draw2.text((fx + (f_box_w - draw2.textlength(d_str, font=font_label))/2, line_y + 20*SCALE), d_str, fill=TEXT, font=font_label)
-            icon = load_icon(f["kind"])
-            if icon:
-                icon = icon.resize((50*SCALE, 50*SCALE))
-                img2.paste(icon, (int(fx + (f_box_w - 50*SCALE)/2), int(line_y + 45*SCALE)), icon)
-            t_str = f"{int(round(f['min']))}°/{int(round(f['max']))}°"
-            draw2.text((fx + (f_box_w - draw2.textlength(t_str, font=font_temp))/2, line_y + 105*SCALE), t_str, fill=TEXT, font=font_temp)
+    
+    # 5 columns
+    wx_col_w = W2 / 5
+    wx_y_start = grid_bottom + (10 * SCALE)
+    
+    icon_size = 50 * SCALE
 
-    # Final Save
+    for i in range(5):
+        cx = i * wx_col_w + (wx_col_w / 2)
+        
+        if i < len(forecasts):
+            f = forecasts[i]
+            d_obj = f['date']
+            kind = f['kind']
+            tmin, tmax = f['min'], f['max']
+            
+            # 1. Day Name (Mon, Tue...)
+            day_str = d_obj.strftime("%a") # Mon, Tue
+            dw = draw2.textlength(day_str, font=font_wx_day)
+            draw2.text((cx - dw/2, wx_y_start), day_str, fill=TEXT, font=font_wx_day)
+            
+            # 2. Icon
+            icon = load_icon(kind)
+            if icon:
+                icon = icon.resize((icon_size, icon_size))
+                ix = int(cx - icon_size/2)
+                iy = int(wx_y_start + 25 * SCALE)
+                img2.paste(icon, (ix, iy), icon)
+            
+            # 3. Temp (Min/Max)
+            t_str = f"{int(round(tmin))}°/{int(round(tmax))}°"
+            tw = draw2.textlength(t_str, font=font_wx_temp)
+            ty = wx_y_start + 85 * SCALE
+            draw2.text((cx - tw/2, ty), t_str, fill=TEXT, font=font_wx_temp)
+
+    # -------------------------
+    # Save
+    # -------------------------
     img = img2.resize((W, H), resample=Image.Resampling.LANCZOS)
     os.makedirs("docs", exist_ok=True)
     img.save("docs/latest.png")
+    img.save("docs/latest.bmp")
 
 if __name__ == "__main__":
     main()
