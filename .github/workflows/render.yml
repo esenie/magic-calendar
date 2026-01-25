@@ -3,7 +3,9 @@ name: Render Calendar
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 * * * *"   # 매시간 (원하면 수정)
+    # KST 기준: 00, 06, 08, 10, 12, 14, 16, 18, 20, 22시 실행
+    # (GitHub Actions cron은 UTC 기준)
+    - cron: "0 1,3,5,7,9,11,13,15,21,23 * * *"
 
 permissions:
   contents: write
@@ -20,7 +22,7 @@ jobs:
 
       - run: pip install -r requirements.txt
       - run: python make_icons.py
-      # ✅ 여기서 단 한 번만 실행 + env 포함
+
       - name: Render calendar image
         run: python render.py
         env:
@@ -28,6 +30,7 @@ jobs:
           OPENWEATHER_LAT: "37.5041"
           OPENWEATHER_LON: "126.9042"
           ICAL_URL: ${{ secrets.ICAL_URL }}
+
       - name: Commit image
         run: |
           git config user.name "github-actions"
