@@ -346,6 +346,10 @@ def main():
             # ✅ 이벤트 시작은 셀 중간(EVENT_BASE_FRAC)부터 시작: 날짜/오늘박스와 분리
             base_y = y0 + int(cell_h * EVENT_BASE_FRAC)
 
+            # ✅ 오늘 날짜면, 박스 아래로 이벤트 시작을 밀어내기 (겹침 방지)
+            if day == today:
+                box_bottom = ry2  # today box bottom
+                base_y = max(base_y, box_bottom + (6 * SCALE))
             left_pad = x0 + EVENT_LEFT_PAD
             text_x = left_pad + EVENT_TEXT_GAP
             max_text_w = (x0 + cell_w) - text_x - (6 * SCALE)
