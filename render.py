@@ -1,5 +1,5 @@
 from PIL import Image, ImageDraw, ImageFont
-from datetime import datetime, timedelta
+from datetime import datetime
 import calendar
 import pytz
 import os
@@ -22,7 +22,7 @@ W2, H2 = W * SCALE, H * SCALE
 # Colors (E-Ink friendly)
 # =========================
 TEXT = (0, 0, 0)
-FADE = TEXT  # keep all text black (e-ink)
+FADE = TEXT
 RED  = (200, 0, 0)
 
 DOW = ["S", "M", "T", "W", "T", "F", "S"]
@@ -56,14 +56,6 @@ def load_icon(kind: str):
     return Image.open(p).convert("RGBA")
 
 def fetch_5day_forecast(lat: float, lon: float, tzname="Asia/Seoul", days=5):
-    """
-    OpenWeather 3-hour forecast -> group by local date
-    return list of dict:
-      [{"date": date, "kind": "sun", "tmin": 1.2, "tmax": 7.8}, ...] length=days
-    Rules:
-      - kind: pick entry closest to 12:00 local time (fallback first entry of that day)
-      - tmin/tmax: use main.temp_min / main.temp_max across the day
-    """
     api_key = os.getenv("OPENWEATHER_API_KEY", "").strip()
     if not api_key:
         return []
@@ -91,7 +83,6 @@ def fetch_5day_forecast(lat: float, lon: float, tzname="Asia/Seoul", days=5):
             break
         items = by_day[d]
 
-        # closest to 12:00
         target = datetime(d.year, d.month, d.day, 12, 0, 0, tzinfo=tz)
         best_item = None
         best_dist = None
@@ -158,7 +149,7 @@ def fetch_events_by_date(tzname="Asia/Seoul", max_per_day=2):
                 dtstart = tz.localize(dtstart)
             day = dtstart.astimezone(tz).date()
         else:
-            day = dtstart  # date
+            day = dtstart
 
         events.setdefault(day, []).append(summary)
 
@@ -189,7 +180,6 @@ def main():
     today = now.date()
     year, month = now.year, now.month
 
-    # Supersampled canvas
     img2 = Image.new("RGB", (W2, H2), "white")
     draw2 = ImageDraw.Draw(img2)
 
@@ -199,33 +189,41 @@ def main():
     font_month = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 235 * SCALE)
     font_date  = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 44 * SCALE)
     font_dow   = ImageFont.truetype("assets/NanumGothicBold.ttf", 32 * SCALE)
-    font_event = ImageFont.truetype("assets/NanumSquareEB.ttf", 14 * SCALE)
+
+    # (핵심) 이벤트 폰트 한 단계 축소 → 2줄 확보
+    font_event = ImageFont.truetype("assets/NanumSquareEB.ttf", 12 * SCALE)
 
     font_label = ImageFont.truetype("assets/Inter_28pt-ExtraLight.ttf", 12 * SCALE)
-    font_wday  = ImageFont.truetype("assets/NanumGothicBold.ttf", 14 * SCALE)  # forecast day label
+    font_wday  = ImageFont.truetype("assets/NanumGothicBold.ttf", 14 * SCALE)
     font_temp  = ImageFont.truetype("assets/Inter_28pt-ExtraLight.ttf", 12 * SCALE)
 
     # -------------------------
-    # Layout: minimize margins
+    # Layout
     # -------------------------
     side_margin = 6 * SCALE
     top_margin  = 4 * SCALE
     bottom_margin = 4 * SCALE
 
     # =========================
-    # Tuning knobs (NEW)
+    # Tuning knobs (최종)
     # =========================
-    GRID_TO_FORECAST_GAP = 4 * SCALE   # (문제3) 마지막 주 ↔ 5일예보 사이 여백
-    FORECAST_H = 120 * SCALE           # 5일예보 높이 (135~160 튜닝 추천)
+    GRID_TO_FORECAST_GAP = 2 * SCALE
+    FORECAST_H = 110 * SCALE
 
-    DATE_TOP_PAD_FRAC = 0.10           # 날짜 y 시작(셀 높이 대비 비율)
-    EVENT_TOP_PAD = 6 * SCALE          # 날짜 bbox 아래로 이벤트 시작 여백 (문제1)
-    EVENT_BOTTOM_PAD = 6 * SCALE      # 셀 바닥 여백
-    EVENT_LINE_GAP = 16 * SCALE        # 이벤트 줄 간격
+    DATE_TOP_PAD_FRAC = 0.10
 
-    UNDERLINE_GAP = 1 * SCALE          # (문제2) 글자 bbox 밑으로 밑줄 간격
-    UNDERLINE_INSET_FRAC = 0.06        # 밑줄 좌/우 inset (bbox width 대비)
+    EVENT_TOP_PAD = 4 * SCALE
+    EVENT_BOTTOM_PAD = 4 * SCALE
+    EVENT_LINE_GAP = 12 * SCALE
+
+    UNDERLINE_GAP = 1 * SCALE
+    UNDERLINE_INSET_FRAC = 0.06
     UNDERLINE_W = max(1, int(2 * SCALE))
+
+    # 오늘 표시 강화 (밑줄 + 원형 하이라이트)
+    TODAY_CIRCLE = True
+    TODAY_CIRCLE_PAD = 10 * SCALE        # 숫자 bbox 주변 여백
+    TODAY_CIRCLE_W = max(2, int(3 * SCALE))
 
     # ---------- Top-right updated time ----------
     updated = now.strftime("%m-%d %H:%M")
@@ -241,7 +239,7 @@ def main():
     month_bottom = month_y + font_month.size
 
     # ---------- DOW + GRID positioning ----------
-    month_to_dow_gap = 28 * SCALE
+    month_to_dow_gap = 24 * SCALE
     dow_y = month_bottom + month_to_dow_gap
 
     # ---------- Bottom 5-day forecast area ----------
@@ -254,8 +252,8 @@ def main():
     grid_right = W2 - side_margin
     grid_w = grid_right - grid_left
 
-    grid_top = dow_y + (24 * SCALE)
-    grid_bottom = forecast_top - GRID_TO_FORECAST_GAP  # (NEW) gap control
+    grid_top = dow_y + (20 * SCALE)
+    grid_bottom = forecast_top - GRID_TO_FORECAST_GAP
 
     cols, rows = 7, 6
     cell_w = grid_w / cols
@@ -278,32 +276,43 @@ def main():
     cal = calendar.Calendar(firstweekday=6)
     days = list(cal.itermonthdates(year, month))[:42]
 
-    # --------- Event alignment knobs (기존 요청 반영) ----------
-    EVENT_LEFT_PAD = 14 * SCALE       # dot 시작 x를 더 오른쪽으로
-    EVENT_TEXT_GAP = 14 * SCALE       # dot 이후 텍스트 시작 오프셋
+    # Event alignment knobs
+    EVENT_LEFT_PAD = 14 * SCALE
+    EVENT_TEXT_GAP = 14 * SCALE
 
     for i, day in enumerate(days):
         r, c = divmod(i, cols)
         x0 = grid_left + c * cell_w
         y0 = grid_top + r * cell_h
 
-        # Sunday red
         is_sunday = (c == 0)
         date_color = RED if is_sunday else TEXT
 
         # =========================
-        # Date + TODAY underline (bbox 기반, 고정 노브 적용)
+        # Date + TODAY highlight
         # =========================
         s = str(day.day)
         sw = draw2.textlength(s, font=font_date)
         sx = x0 + (cell_w - sw) / 2
         sy = y0 + int(cell_h * DATE_TOP_PAD_FRAC)
 
+        # draw date
         draw2.text((sx, sy), s, fill=date_color, font=font_date)
 
+        # bbox
         bx1, by1, bx2, by2 = draw2.textbbox((sx, sy), s, font=font_date)
 
         if day == today:
+            # (추가) 원형(타원) 외곽선 하이라이트 → 밑줄보다 훨씬 눈에 띔
+            if TODAY_CIRCLE:
+                pad = TODAY_CIRCLE_PAD
+                draw2.ellipse(
+                    [bx1 - pad, by1 - pad, bx2 + pad, by2 + pad],
+                    outline=RED,
+                    width=TODAY_CIRCLE_W
+                )
+
+            # 기존 underline도 유지(취향에 따라 원하면 제거 가능)
             uy = by2 + UNDERLINE_GAP
             inset = int((bx2 - bx1) * UNDERLINE_INSET_FRAC)
             ux1 = bx1 + inset
@@ -311,38 +320,37 @@ def main():
             draw2.line([(ux1, uy), (ux2, uy)], fill=RED, width=UNDERLINE_W)
 
         # =========================
-        # =========================
-        # Events (2개 고정 표시: 공간은 레이아웃으로 확보)
+        # Events (2개 고정 표시)
         # =========================
         evs = events_by_date.get(day, [])
         if evs:
             base_y = by2 + EVENT_TOP_PAD
-        
+
             left_pad = x0 + EVENT_LEFT_PAD
             dot_r = int(3 * SCALE)
             text_x = left_pad + EVENT_TEXT_GAP
             max_text_w = (x0 + cell_w) - text_x - (6 * SCALE)
-        
-            # 폰트 한 줄 높이
+
+            # 한 줄 높이
             _, ty1, _, ty2 = draw2.textbbox((0, 0), "가A", font=font_event)
             line_h = (ty2 - ty1)
-        
-            for idx, t in enumerate(evs[:2]):   # 무조건 2개까지 시도
+
+            for idx, t in enumerate(evs[:2]):
                 t2 = truncate(draw2, t, font_event, max_text_w)
                 if not t2:
                     continue
-        
+
                 ty = base_y + idx * (line_h + EVENT_LINE_GAP)
-        
-                # (안전장치) 셀 바닥을 넘으면 그 줄은 그리지 않음
+
+                # 셀 바닥 넘어가면 그 줄은 스킵
                 if ty + line_h > (y0 + cell_h - EVENT_BOTTOM_PAD):
                     break
-        
+
                 cx = left_pad + dot_r
                 cy = ty + int(line_h * 0.55)
                 draw2.ellipse([cx - dot_r, cy - dot_r, cx + dot_r, cy + dot_r], fill=RED)
                 draw2.text((text_x, ty), t2, fill=TEXT, font=font_event)
-        
+
     # =========================
     # 5-day forecast (BOTTOM)
     # =========================
@@ -366,7 +374,6 @@ def main():
     draw2.line([(fx0, sep_y), (fx1, sep_y)], fill=(0, 0, 0), width=1)
 
     content_top = forecast_top + (10 * SCALE)
-    content_bottom = forecast_bottom - (6 * SCALE)
 
     icon_size = int(40 * SCALE)
     label_y = content_top
