@@ -147,11 +147,10 @@ def fetch_events_by_date(tzname="Asia/Seoul", max_per_day=2):
                 dtstart = tz.localize(dtstart)
             day = dtstart.astimezone(tz).date()
         else:
-            day = dtstart  # date object
+            day = dtstart
 
         events.setdefault(day, []).append(summary)
 
-    # cap per-day
     for d in list(events.keys()):
         events[d] = events[d][:max_per_day]
 
@@ -171,10 +170,6 @@ def truncate(draw, text, font, max_w):
     return text + ell
 
 def needed_week_rows(days42, month: int) -> int:
-    """
-    days42: list of 42 dates (6 weeks)
-    return: 실제로 이 '월'을 표시하는 데 필요한 주(행) 수 (5 or 6)
-    """
     last_idx = 0
     for i, d in enumerate(days42):
         if d.month == month:
@@ -199,8 +194,6 @@ def main():
     font_month = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 235 * SCALE)
     font_date  = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 44 * SCALE)
     font_dow   = ImageFont.truetype("assets/NanumGothicBold.ttf", 32 * SCALE)
-
-    # ✅ 2줄 확보를 위해 이벤트 폰트 축소 유지
     font_event = ImageFont.truetype("assets/NanumSquareEB.ttf", 12 * SCALE)
 
     font_label = ImageFont.truetype("assets/Inter_28pt-ExtraLight.ttf", 12 * SCALE)
@@ -215,25 +208,29 @@ def main():
     bottom_margin = 4 * SCALE
 
     # =========================
-    # Tuning knobs (확정)
+    # Tuning knobs (applied)
     # =========================
     GRID_TO_FORECAST_GAP = 2 * SCALE
     FORECAST_H = 110 * SCALE
 
+    # 날짜 위치
     DATE_TOP_PAD_FRAC = 0.08
 
-    # 이벤트 영역: 2줄이 들어가도록 고정 세팅
-    EVENT_LINE_GAP = 12 * SCALE
+    # ✅ 요청 반영:
+    # - 날짜 ↔ 이벤트 더 멀게: EVENT_BASE_FRAC ↑
+    # - 이벤트 1줄 ↔ 2줄 더 가깝게: EVENT_LINE_GAP ↓
+    EVENT_BASE_FRAC = 0.56
+    EVENT_LINE_GAP = 6 * SCALE
     EVENT_BOTTOM_PAD = 4 * SCALE
 
-    # 이벤트 시작 위치를 "날짜 bbox"가 아니라 "셀 비율"로 분리 (오늘 박스랑 절대 안 겹치게)
-    EVENT_BASE_FRAC = 0.50   # 셀 상단부터 50% 지점에서 이벤트 시작
-
-    # today highlight: ✅ 동그라미 제거 → 네모(라운드 박스) 테두리
+    # 오늘 네모 박스
     TODAY_BOX_PAD_X = 10 * SCALE
     TODAY_BOX_PAD_Y = 8 * SCALE
     TODAY_BOX_W = max(2, int(3 * SCALE))
-    TODAY_BOX_RADIUS = 10 * SCALE  # 둥근 네모
+    TODAY_BOX_RADIUS = 10 * SCALE
+
+    # 오늘 박스 아래로 이벤트 시작 밀어내기 여유
+    TODAY_BOX_TO_EVENT_GAP = 6 * SCALE
 
     # ---------- Top-right updated time ----------
     updated = now.strftime("%m-%d %H:%M")
@@ -260,16 +257,15 @@ def main():
     grid_right = W2 - side_margin
     grid_w = grid_right - grid_left
 
-    grid_top = dow_y + (20 * SCALE)
+    # ✅ 요청 반영: 요일 ↔ 날짜 간격 넓히기 (grid_top 증가)
+    grid_top = dow_y + (30 * SCALE)
     grid_bottom = forecast_top - GRID_TO_FORECAST_GAP
 
     cols = 7
 
-    # Month days (always 42 first)
+    # Month days
     cal = calendar.Calendar(firstweekday=6)
     days42 = list(cal.itermonthdates(year, month))[:42]
-
-    # ✅ 실제 필요한 행(주) 수 자동 계산: 5주면 5행만 사용 → cell_h 크게 확보
     rows = needed_week_rows(days42, month)
     days = days42[:rows * 7]
 
@@ -294,7 +290,7 @@ def main():
     EVENT_TEXT_GAP = 14 * SCALE
     dot_r = int(3 * SCALE)
 
-    # Precompute event line height
+    # event line height
     _, e_y1, _, e_y2 = draw2.textbbox((0, 0), "가A", font=font_event)
     event_line_h = (e_y2 - e_y1)
 
@@ -303,7 +299,6 @@ def main():
         x0 = grid_left + c * cell_w
         y0 = grid_top + r * cell_h
 
-        # Sunday red
         date_color = RED if c == 0 else TEXT
 
         # -------------------------
@@ -318,15 +313,16 @@ def main():
         bx1, by1, bx2, by2 = draw2.textbbox((sx, sy), s, font=font_date)
 
         # -------------------------
-        # TODAY highlight (rounded rectangle, event 영역과 절대 안 겹치게: 날짜 주변만)
+        # TODAY highlight (rounded rectangle)
         # -------------------------
+        today_box_bottom = None
         if day == today:
             rx1 = bx1 - TODAY_BOX_PAD_X
             ry1 = by1 - TODAY_BOX_PAD_Y
             rx2 = bx2 + TODAY_BOX_PAD_X
             ry2 = by2 + TODAY_BOX_PAD_Y
+            today_box_bottom = ry2
 
-            # rounded rectangle (Pillow supports rounded_rectangle in recent versions)
             try:
                 draw2.rounded_rectangle(
                     [rx1, ry1, rx2, ry2],
@@ -335,21 +331,20 @@ def main():
                     width=TODAY_BOX_W
                 )
             except Exception:
-                # fallback: normal rectangle
                 draw2.rectangle([rx1, ry1, rx2, ry2], outline=RED, width=TODAY_BOX_W)
 
         # -------------------------
-        # Events (2개 표시가 기본 목표: cell_h 확보로 해결)
+        # Events (2 lines)
         # -------------------------
         evs = events_by_date.get(day, [])
         if evs:
-            # ✅ 이벤트 시작은 셀 중간(EVENT_BASE_FRAC)부터 시작: 날짜/오늘박스와 분리
+            # ✅ 요청 반영: 날짜 ↔ 이벤트 더 멀게 (EVENT_BASE_FRAC)
             base_y = y0 + int(cell_h * EVENT_BASE_FRAC)
 
-            # ✅ 오늘 날짜면, 박스 아래로 이벤트 시작을 밀어내기 (겹침 방지)
-            if day == today:
-                box_bottom = ry2  # today box bottom
-                base_y = max(base_y, box_bottom + (6 * SCALE))
+            # ✅ 오늘은 박스 아래로 이벤트 시작을 밀어내서 절대 안 겹치게
+            if today_box_bottom is not None:
+                base_y = max(base_y, today_box_bottom + TODAY_BOX_TO_EVENT_GAP)
+
             left_pad = x0 + EVENT_LEFT_PAD
             text_x = left_pad + EVENT_TEXT_GAP
             max_text_w = (x0 + cell_w) - text_x - (6 * SCALE)
@@ -359,18 +354,15 @@ def main():
                 if not t2:
                     continue
 
+                # ✅ 요청 반영: 이벤트 1~2줄 더 가깝게 (EVENT_LINE_GAP 감소)
                 ty = base_y + idx * (event_line_h + EVENT_LINE_GAP)
 
-                # 바닥 넘으면 stop (이제는 rows=5/6 자동이라 대부분 2줄 가능)
                 if ty + event_line_h > (y0 + cell_h - EVENT_BOTTOM_PAD):
                     break
 
-                # dot
                 cx = left_pad + dot_r
                 cy = ty + int(event_line_h * 0.55)
                 draw2.ellipse([cx - dot_r, cy - dot_r, cx + dot_r, cy + dot_r], fill=RED)
-
-                # text
                 draw2.text((text_x, ty), t2, fill=TEXT, font=font_event)
 
     # =========================
@@ -429,7 +421,7 @@ def main():
             tw2 = draw2.textlength(tstr, font=font_temp)
             draw2.text((x_center - tw2 / 2, temp_y), tstr, fill=TEXT, font=font_temp)
 
-    # Downscale (anti-aliasing)
+    # Downscale
     img = img2.resize((W, H), resample=Image.Resampling.LANCZOS)
 
     # Save (DO NOT change these paths)
