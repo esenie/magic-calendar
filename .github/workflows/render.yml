@@ -1,11 +1,9 @@
 name: Render Calendar
 
-
 on:
   workflow_dispatch:
   schedule:
     - cron: "*/30 * * * *"
-
 
 permissions:
   contents: write
@@ -20,21 +18,42 @@ jobs:
         with:
           python-version: "3.11"
 
-      - run: pip install -r requirements.txt
-      - run: python make_icons.py
+      - name: Install python deps
+        run: pip install -r requirements.txt
 
+      # =========================
+      # SVG → PNG 변환 (여기!)
+      # =========================
+      - name: Install rsvg-convert
+        run: sudo apt-get update && sudo apt-get install -y librsvg2-bin
+
+      - name: Convert SVG weather icons to PNG
+        run: |
+          mkdir -p assets/weather
+          rsvg-convert -w 80 -h 80 assets/weather_svg/sun.svg -o assets/weather/sun.png
+          rsvg-convert -w 80 -h 80 assets/weather_svg/cloud.svg -o assets/weather/cloud.png
+          rsvg-convert -w 80 -h 80 assets/weather_svg/rain.svg -o assets/weather/rain.png
+          rsvg-convert -w 80 -h 80 assets/weather_svg/snow.svg -o assets/weather/snow.png
+          rsvg-convert -w 80 -h 80 assets/weather_svg/thunder.svg -o assets/weather/thunder.png
+          rsvg-convert -w 80 -h 80 assets/weather_svg/fog.svg -o assets/weather/fog.png
+
+      # =========================
+      # 캘린더 렌더링
+      # =========================
       - name: Render calendar image
         run: python render.py
         env:
-          OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
-          OPENWEATHER_LAT: "37.5041"
-          OPENWEATHER_LON: "126.9042"
+          FORECAST_LAT: "37.5041"
+          FORECAST_LON: "126.9042"
           ICAL_URL: ${{ secrets.ICAL_URL }}
 
+      # =========================
+      # 결과 커밋
+      # =========================
       - name: Commit image
         run: |
           git config user.name "github-actions"
           git config user.email "actions@github.com"
-          git add docs/latest.png docs/latest.bmp
+          git add docs/latest.png docs/latest.bmp assets/weather/*.png
           git commit -m "update calendar image" || echo "no change"
           git push
