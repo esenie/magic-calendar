@@ -1,5 +1,5 @@
 from PIL import Image, ImageDraw, ImageFont
-from datetime import datetime
+from datetime import datetime, timedelta
 import calendar
 import pytz
 import os
@@ -28,17 +28,8 @@ DOW = ["S", "M", "T", "W", "T", "F", "S"]
 ICON_DIR = "assets/weather"
 
 # =========================
-# Weather helpers
+# Icons helpers
 # =========================
-def code_to_kind(wid: int) -> str:
-    if 200 <= wid <= 232: return "thunder"
-    if 300 <= wid <= 531: return "rain"
-    if 600 <= wid <= 622: return "snow"
-    if 701 <= wid <= 781: return "fog"
-    if wid == 800:        return "sun"
-    if 801 <= wid <= 804: return "cloud"
-    return "cloud"
-
 def ensure_icons():
     need = ["sun", "cloud", "rain", "snow", "thunder", "fog"]
     if all(os.path.exists(os.path.join(ICON_DIR, f"{k}.png")) for k in need):
@@ -54,61 +45,93 @@ def load_icon(kind: str):
         return None
     return Image.open(p).convert("RGBA")
 
-def fetch_5day_forecast(lat: float, lon: float, tzname="Asia/Seoul", days=5):
-    api_key = os.getenv("OPENWEATHER_API_KEY", "").strip()
-    if not api_key:
-        return []
+# =========================
+# Open-Meteo helpers
+# =========================
+def openmeteo_code_to_kind(code: int) -> str:
+    """
+    Open-Meteo weathercode mapping (요약)
+    0: clear
+    1,2,3: mainly clear/partly cloudy/overcast
+    45,48: fog
+    51,53,55: drizzle
+    56,57: freezing drizzle
+    61,63,65: rain
+    66,67: freezing rain
+    71,73,75: snow
+    77: snow grains
+    80,81,82: rain showers
+    85,86: snow showers
+    95: thunderstorm
+    96,99: thunderstorm with hail
+    """
+    try:
+        c = int(code)
+    except Exception:
+        return "cloud"
 
-    url = "https://api.openweathermap.org/data/2.5/forecast"
-    params = {"lat": lat, "lon": lon, "appid": api_key, "units": "metric"}
+    if c == 0:
+        return "sun"
+    if c in (1, 2):
+        return "cloud"
+    if c == 3:
+        return "cloud"
+    if c in (45, 48):
+        return "fog"
+    if 51 <= c <= 57:
+        return "rain"
+    if 61 <= c <= 67:
+        return "rain"
+    if 71 <= c <= 77:
+        return "snow"
+    if 80 <= c <= 82:
+        return "rain"
+    if 85 <= c <= 86:
+        return "snow"
+    if c in (95, 96, 99):
+        return "thunder"
+    return "cloud"
+
+def fetch_openmeteo_daily_5(lat: float, lon: float, tzname="Asia/Seoul", days=5):
+    """
+    Open-Meteo daily forecast (no key)
+    return list length=days:
+      [{"date": date, "kind": "sun", "tmin": -3.1, "tmax": 2.8}, ...]
+    """
+    url = "https://api.open-meteo.com/v1/forecast"
+    params = {
+        "latitude": lat,
+        "longitude": lon,
+        "timezone": tzname,
+        "forecast_days": days,
+        "daily": "temperature_2m_min,temperature_2m_max,weathercode",
+    }
     r = requests.get(url, params=params, timeout=20)
     r.raise_for_status()
     data = r.json()
 
-    tz = pytz.timezone(tzname)
-    today = datetime.now(tz).date()
-
-    by_day = {}
-    for item in data.get("list", []):
-        dt = datetime.fromtimestamp(item["dt"], tz)
-        d = dt.date()
-        if d < today:
-            continue
-        by_day.setdefault(d, []).append((dt, item))
+    daily = data.get("daily", {})
+    times = daily.get("time", []) or []
+    tmins = daily.get("temperature_2m_min", []) or []
+    tmaxs = daily.get("temperature_2m_max", []) or []
+    wcodes = daily.get("weathercode", []) or []
 
     out = []
-    for d in sorted(by_day.keys()):
-        if len(out) >= days:
-            break
-        items = by_day[d]
+    for i in range(min(days, len(times), len(tmins), len(tmaxs), len(wcodes))):
+        d = datetime.strptime(times[i], "%Y-%m-%d").date()
+        out.append({
+            "date": d,
+            "kind": openmeteo_code_to_kind(wcodes[i]),
+            "tmin": tmins[i],
+            "tmax": tmaxs[i],
+        })
 
-        target = datetime(d.year, d.month, d.day, 12, 0, 0, tzinfo=tz)
-        best_item, best_dist = None, None
-        for dt, item in items:
-            dist = abs((dt - target).total_seconds())
-            if best_dist is None or dist < best_dist:
-                best_dist = dist
-                best_item = item
-        if best_item is None:
-            best_item = items[0][1]
-
-        kind = ""
-        if best_item.get("weather"):
-            wid = int(best_item["weather"][0]["id"])
-            kind = code_to_kind(wid)
-
-        tmin, tmax = None, None
-        for _, item in items:
-            main = item.get("main", {})
-            lo = main.get("temp_min", main.get("temp"))
-            hi = main.get("temp_max", main.get("temp"))
-            if isinstance(lo, (int, float)):
-                tmin = lo if tmin is None else min(tmin, lo)
-            if isinstance(hi, (int, float)):
-                tmax = hi if tmax is None else max(tmax, hi)
-
-        out.append({"date": d, "kind": kind, "tmin": tmin, "tmax": tmax})
-
+    # pad if short
+    tz = pytz.timezone(tzname)
+    today = datetime.now(tz).date()
+    while len(out) < days:
+        d = today + timedelta(days=len(out))
+        out.append({"date": d, "kind": "", "tmin": None, "tmax": None})
     return out
 
 # =========================
@@ -216,9 +239,7 @@ def main():
     # 날짜 위치
     DATE_TOP_PAD_FRAC = 0.08
 
-    # ✅ 요청 반영:
-    # - 날짜 ↔ 이벤트 더 멀게: EVENT_BASE_FRAC ↑
-    # - 이벤트 1줄 ↔ 2줄 더 가깝게: EVENT_LINE_GAP ↓
+    # 이벤트 간격
     EVENT_BASE_FRAC = 0.56
     EVENT_LINE_GAP = 6 * SCALE
     EVENT_BOTTOM_PAD = 4 * SCALE
@@ -228,8 +249,6 @@ def main():
     TODAY_BOX_PAD_Y = 8 * SCALE
     TODAY_BOX_W = max(2, int(3 * SCALE))
     TODAY_BOX_RADIUS = 10 * SCALE
-
-    # 오늘 박스 아래로 이벤트 시작 밀어내기 여유
     TODAY_BOX_TO_EVENT_GAP = 6 * SCALE
 
     # ---------- Top-right updated time ----------
@@ -257,7 +276,7 @@ def main():
     grid_right = W2 - side_margin
     grid_w = grid_right - grid_left
 
-    # ✅ 요청 반영: 요일 ↔ 날짜 간격 넓히기 (grid_top 증가)
+    # 요일 ↔ 날짜 간격
     grid_top = dow_y + (30 * SCALE)
     grid_bottom = forecast_top - GRID_TO_FORECAST_GAP
 
@@ -301,9 +320,7 @@ def main():
 
         date_color = RED if c == 0 else TEXT
 
-        # -------------------------
         # Date draw
-        # -------------------------
         s = str(day.day)
         sw = draw2.textlength(s, font=font_date)
         sx = x0 + (cell_w - sw) / 2
@@ -312,9 +329,7 @@ def main():
 
         bx1, by1, bx2, by2 = draw2.textbbox((sx, sy), s, font=font_date)
 
-        # -------------------------
         # TODAY highlight (rounded rectangle)
-        # -------------------------
         today_box_bottom = None
         if day == today:
             rx1 = bx1 - TODAY_BOX_PAD_X
@@ -333,15 +348,10 @@ def main():
             except Exception:
                 draw2.rectangle([rx1, ry1, rx2, ry2], outline=RED, width=TODAY_BOX_W)
 
-        # -------------------------
         # Events (2 lines)
-        # -------------------------
         evs = events_by_date.get(day, [])
         if evs:
-            # ✅ 요청 반영: 날짜 ↔ 이벤트 더 멀게 (EVENT_BASE_FRAC)
             base_y = y0 + int(cell_h * EVENT_BASE_FRAC)
-
-            # ✅ 오늘은 박스 아래로 이벤트 시작을 밀어내서 절대 안 겹치게
             if today_box_bottom is not None:
                 base_y = max(base_y, today_box_bottom + TODAY_BOX_TO_EVENT_GAP)
 
@@ -354,9 +364,7 @@ def main():
                 if not t2:
                     continue
 
-                # ✅ 요청 반영: 이벤트 1~2줄 더 가깝게 (EVENT_LINE_GAP 감소)
                 ty = base_y + idx * (event_line_h + EVENT_LINE_GAP)
-
                 if ty + event_line_h > (y0 + cell_h - EVENT_BOTTOM_PAD):
                     break
 
@@ -366,14 +374,16 @@ def main():
                 draw2.text((text_x, ty), t2, fill=TEXT, font=font_event)
 
     # =========================
-    # 5-day forecast
+    # 5-day forecast (Open-Meteo)
     # =========================
     ensure_icons()
-    lat = float(os.getenv("OPENWEATHER_LAT", "37.5665"))
-    lon = float(os.getenv("OPENWEATHER_LON", "126.9780"))
+
+    # 좌표 (Actions에서 env로 주면 됨)
+    lat = float(os.getenv("FORECAST_LAT", os.getenv("OPENWEATHER_LAT", "37.5665")))
+    lon = float(os.getenv("FORECAST_LON", os.getenv("OPENWEATHER_LON", "126.9780")))
 
     try:
-        fc = fetch_5day_forecast(lat, lon, tzname="Asia/Seoul", days=5)
+        fc = fetch_openmeteo_daily_5(lat, lon, tzname="Asia/Seoul", days=5)
     except Exception:
         fc = []
 
