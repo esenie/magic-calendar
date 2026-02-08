@@ -208,11 +208,13 @@ def main():
     now = datetime.now(tz)
     today = now.date()
     year, month = now.year, now.month
-        # ✅ 대한민국 공휴일(대체공휴일 포함) 로드
+
+    # ✅ 대한민국 공휴일(대체공휴일 포함) 로드
     try:
         kr_holidays = holidays.KR(years=[year - 1, year, year + 1], language="ko")
     except TypeError:
         kr_holidays = holidays.KR(years=[year - 1, year, year + 1])
+
     img2 = Image.new("RGB", (W2, H2), "white")
     draw2 = ImageDraw.Draw(img2)
 
@@ -296,11 +298,10 @@ def main():
     cell_w = grid_w / cols
     cell_h = (grid_bottom - grid_top) / rows
 
-    # Draw DOW
+    # Draw DOW (원본 그대로)
     for c, dch in enumerate(DOW):
         x = grid_left + c * cell_w + cell_w / 2
-        is_holiday = (day in kr_holidays)   # ✅ 공휴일이면 True
-        date_color = RED if (c == 0 or is_holiday) else TEXT
+        color = RED if c == 0 else TEXT
         dw = draw2.textlength(dch, font=font_dow)
         draw2.text((x - dw / 2, dow_y), dch, fill=color, font=font_dow)
 
@@ -324,7 +325,9 @@ def main():
         x0 = grid_left + c * cell_w
         y0 = grid_top + r * cell_h
 
-        date_color = RED if c == 0 else TEXT
+        # ✅ 일요일 OR 대한민국 공휴일이면 날짜를 빨강
+        is_holiday = (day in kr_holidays)
+        date_color = RED if (c == 0 or is_holiday) else TEXT
 
         # Date draw
         s = str(day.day)
