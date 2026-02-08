@@ -99,7 +99,7 @@ def fetch_openmeteo_daily_5(lat, lon, tzname="Asia/Seoul", days=5):
     return out
 
 # =========================
-# ICS helpers
+# ICS helpers (❗원본 유지)
 # =========================
 def fetch_events_by_date(tzname="Asia/Seoul", max_per_day=2):
     url = os.getenv("ICAL_URL", "").strip()
@@ -195,46 +195,58 @@ def main():
     img2 = Image.new("RGB", (W2, H2), "white")
     draw2 = ImageDraw.Draw(img2)
 
+    # ---------- Fonts (원본 유지 + 공휴일 폰트 추가) ----------
     font_month = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 235 * SCALE)
     font_date  = ImageFont.truetype("assets/Inter_28pt-Regular.ttf", 44 * SCALE)
     font_dow   = ImageFont.truetype("assets/NanumGothicBold.ttf", 32 * SCALE)
     font_event = ImageFont.truetype("assets/NanumSquareEB.ttf", 12 * SCALE)
     font_holiday = ImageFont.truetype("assets/NanumGothicBold.ttf", 11 * SCALE)
 
-    side = 6 * SCALE
-    top = 4 * SCALE
+    # ---------- Layout ----------
+    side_margin = 6 * SCALE
+    grid_top = 280 * SCALE
+    grid_bottom = 700 * SCALE
+    grid_left = side_margin
+    grid_right = W2 - side_margin
 
     cal = calendar.Calendar(firstweekday=6)
     days42 = list(cal.itermonthdates(year, month))[:42]
     rows = needed_week_rows(days42, month)
     days = days42[:rows * 7]
 
-    grid_top = 280 * SCALE
-    grid_bottom = 700 * SCALE
-    grid_left = side
-    grid_right = W2 - side
-
     cell_w = (grid_right - grid_left) / 7
     cell_h = (grid_bottom - grid_top) / rows
 
-    # DOW
+    # ---------- DOW ----------
     for c, d in enumerate(DOW):
         color = RED if c == 0 else TEXT
         w = draw2.textlength(d, font=font_dow)
         draw2.text((grid_left + c * cell_w + cell_w/2 - w/2, 220*SCALE),
                    d, fill=color, font=font_dow)
 
-    events = fetch_events_by_date()
+    # ---------- Events ----------
+    events_by_date = fetch_events_by_date()
 
+    EVENT_BASE_FRAC = 0.56
+    EVENT_LINE_GAP = 6 * SCALE
+    EVENT_LEFT_PAD = 14 * SCALE
+    EVENT_TEXT_GAP = 14 * SCALE
+    dot_r = int(3 * SCALE)
+
+    _, e_y1, _, e_y2 = draw2.textbbox((0, 0), "가A", font=font_event)
+    event_line_h = (e_y2 - e_y1)
+
+    # ---------- Days ----------
     for i, day in enumerate(days):
         r, c = divmod(i, 7)
         x0 = grid_left + c * cell_w
         y0 = grid_top + r * cell_h
 
-        is_holiday = day in kr_holidays
-        is_sunday = (c == 0)
-        date_color = RED if (is_holiday or is_sunday) else TEXT
+        is_holiday = (day in kr_holidays)
+        is_sunday  = (c == 0)
+        date_color = RED if (is_sunday or is_holiday) else TEXT
 
+        # Date
         s = str(day.day)
         sw = draw2.textlength(s, font=font_date)
         sx = x0 + (cell_w - sw)/2
@@ -243,14 +255,45 @@ def main():
 
         bx1, by1, bx2, by2 = draw2.textbbox((sx, sy), s, font=font_date)
 
+        # ---- 공휴일 이름 (이벤트보다 위, 겹치면 자동 생략) ----
         if is_holiday and day.month == month:
-            hname = shorten_holiday_name(str(kr_holidays.get(day)))
-            max_w = cell_w - (10 * SCALE)
-            htxt = truncate(draw2, hname, font_holiday, max_w)
-            hw = draw2.textlength(htxt, font=font_holiday)
-            draw2.text((x0 + (cell_w - hw)/2, by2 + 4*SCALE),
-                       htxt, fill=RED, font=font_holiday)
+            hname = shorten_holiday_name(str(kr_holidays.get(day, "")))
+            if hname:
+                max_hw = cell_w - (10 * SCALE)
+                htxt = truncate(draw2, hname, font_holiday, max_hw)
 
+                hy = int(by2 + (4 * SCALE))
+                base_event_y = y0 + int(cell_h * EVENT_BASE_FRAC)
+                _, hy1, _, hy2 = draw2.textbbox((0, 0), htxt, font=font_holiday)
+
+                if hy + (hy2 - hy1) < base_event_y:
+                    hw = draw2.textlength(htxt, font=font_holiday)
+                    hx = x0 + (cell_w - hw)/2
+                    draw2.text((hx, hy), htxt, fill=RED, font=font_holiday)
+
+        # ---- Events (❗원본 로직 유지) ----
+        evs = events_by_date.get(day, [])
+        if evs:
+            base_y = y0 + int(cell_h * EVENT_BASE_FRAC)
+            left_pad = x0 + EVENT_LEFT_PAD
+            text_x = left_pad + EVENT_TEXT_GAP
+            max_text_w = (x0 + cell_w) - text_x - (6 * SCALE)
+
+            for idx, t in enumerate(evs[:2]):
+                t2 = truncate(draw2, t, font_event, max_text_w)
+                if not t2:
+                    continue
+
+                ty = base_y + idx * (event_line_h + EVENT_LINE_GAP)
+                if ty + event_line_h > (y0 + cell_h):
+                    break
+
+                cx = left_pad + dot_r
+                cy = ty + int(event_line_h * 0.55)
+                draw2.ellipse([cx - dot_r, cy - dot_r, cx + dot_r, cy + dot_r], fill=RED)
+                draw2.text((text_x, ty), t2, fill=TEXT, font=font_event)
+
+    # ---------- Save ----------
     img = img2.resize((W, H), Image.Resampling.LANCZOS)
     os.makedirs("docs", exist_ok=True)
     img.save("docs/latest.png")
