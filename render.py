@@ -5,6 +5,7 @@ import pytz
 import os
 import requests
 import subprocess
+import holidays
 from icalendar import Calendar
 
 # =========================
@@ -207,7 +208,11 @@ def main():
     now = datetime.now(tz)
     today = now.date()
     year, month = now.year, now.month
-
+        # ✅ 대한민국 공휴일(대체공휴일 포함) 로드
+    try:
+        kr_holidays = holidays.KR(years=[year - 1, year, year + 1], language="ko")
+    except TypeError:
+        kr_holidays = holidays.KR(years=[year - 1, year, year + 1])
     img2 = Image.new("RGB", (W2, H2), "white")
     draw2 = ImageDraw.Draw(img2)
 
@@ -294,7 +299,8 @@ def main():
     # Draw DOW
     for c, dch in enumerate(DOW):
         x = grid_left + c * cell_w + cell_w / 2
-        color = RED if c == 0 else TEXT
+        is_holiday = (day in kr_holidays)   # ✅ 공휴일이면 True
+        date_color = RED if (c == 0 or is_holiday) else TEXT
         dw = draw2.textlength(dch, font=font_dow)
         draw2.text((x - dw / 2, dow_y), dch, fill=color, font=font_dow)
 
